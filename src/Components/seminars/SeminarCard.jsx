@@ -39,7 +39,8 @@ export default function SeminarCard({
   const pricePerStudent = basePrice > 0 ? basePrice / currentStudents : 0;
   
   const ModalityIcon = modalityIcons[seminar.modality] || Monitor;
-  const fallbackImage = "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=800";
+  const assetBase = import.meta.env.BASE_URL || "/";
+  const fallbackImage = `${assetBase}assets/hero.webp`;
 
   const normalizeImageUrl = (url) => {
     if (!url) return fallbackImage;

@@ -31,16 +31,31 @@ export default function TeacherProfile() {
     },
   });
 
+  const { data: ratingRows = [] } = useQuery({
+    queryKey: ["teacher-profile-rating-stats", id],
+    enabled: !!id,
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase.rpc("get_professor_rating_stats", {
+          professor_ids: [id],
+        });
+        if (error) throw error;
+        return data ?? [];
+      } catch (err) {
+        console.warn("teacher rating stats error", err?.message || err);
+        return [];
+      }
+    },
+  });
+
   const { data: reviews = [], isLoading: reviewsLoading } = useQuery({
     queryKey: ["teacher-profile-reviews", id],
     enabled: !!id,
     queryFn: async () => {
       try {
-        const { data, error } = await supabase
-          .from("seminar_reviews")
-          .select("id,rating,comment,created_at")
-          .eq("professor_id", id)
-          .order("created_at", { ascending: false });
+        const { data, error } = await supabase.rpc("get_professor_reviews", {
+          p_professor_id: id,
+        });
         if (error) throw error;
         return data ?? [];
       } catch (err) {
@@ -51,10 +66,14 @@ export default function TeacherProfile() {
   });
 
   const ratingStats = useMemo(() => {
-    if (!reviews?.length) return { avg: 0, count: 0 };
-    const sum = reviews.reduce((acc, r) => acc + Number(r.rating || 0), 0);
-    return { avg: sum / reviews.length, count: reviews.length };
-  }, [reviews]);
+    const row = Array.isArray(ratingRows) ? ratingRows[0] : ratingRows;
+    const avg = Number(row?.avg_rating);
+    const count = Number(row?.review_count);
+    return {
+      avg: Number.isFinite(avg) ? avg : 0,
+      count: Number.isFinite(count) ? count : 0,
+    };
+  }, [ratingRows]);
 
   if (profileLoading) {
     return (

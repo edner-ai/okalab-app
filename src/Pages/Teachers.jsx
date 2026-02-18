@@ -33,19 +33,18 @@ export default function Teachers() {
   });
 
   const teacherIds = useMemo(() => teachers.map((tch) => tch.id).filter(Boolean), [teachers]);
-  const { data: reviews = [] } = useQuery({
-    queryKey: ["teacher-reviews", teacherIds],
+  const { data: teacherRatingStats = [] } = useQuery({
+    queryKey: ["teacher-rating-stats", teacherIds],
     enabled: teacherIds.length > 0,
     queryFn: async () => {
       try {
-        const { data, error } = await supabase
-          .from("seminar_reviews")
-          .select("professor_id,rating")
-          .in("professor_id", teacherIds);
+        const { data, error } = await supabase.rpc("get_professor_rating_stats", {
+          professor_ids: teacherIds,
+        });
         if (error) throw error;
         return data ?? [];
       } catch (err) {
-        console.warn("teacher reviews load error", err?.message || err);
+        console.warn("teacher rating stats error", err?.message || err);
         return [];
       }
     },
@@ -54,14 +53,15 @@ export default function Teachers() {
 
   const ratingByProfessor = useMemo(() => {
     const map = {};
-    (reviews || []).forEach((row) => {
+    (teacherRatingStats || []).forEach((row) => {
       if (!row?.professor_id) return;
-      if (!map[row.professor_id]) map[row.professor_id] = { sum: 0, count: 0 };
-      map[row.professor_id].sum += Number(row.rating || 0);
-      map[row.professor_id].count += 1;
+      map[row.professor_id] = {
+        avg: Number(row.avg_rating || 0),
+        count: Number(row.review_count || 0),
+      };
     });
     return map;
-  }, [reviews]);
+  }, [teacherRatingStats]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -107,8 +107,8 @@ export default function Teachers() {
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filtered.map((teacher) => {
-              const ratingData = ratingByProfessor[teacher.id] || { sum: 0, count: 0 };
-              const avg = ratingData.count ? ratingData.sum / ratingData.count : 0;
+              const ratingData = ratingByProfessor[teacher.id] || { avg: 0, count: 0 };
+              const avg = ratingData.avg || 0;
 
               return (
                 <Card key={teacher.id} className="border-0 shadow-sm hover:shadow-md transition-shadow">

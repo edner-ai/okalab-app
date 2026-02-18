@@ -30,6 +30,19 @@ export default function Layout({ children }) {
   const { changeLanguage, t } = useLanguage();
   const location = useLocation();
   const navigate = useNavigate();
+  const platformSettingsCacheKey = "platform_settings_public";
+  const cachedPlatformSettings = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = localStorage.getItem(platformSettingsCacheKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (err) {
+      console.warn("platform settings cache parse error", err?.message || err);
+      return null;
+    }
+  }, []);
 
   const { data: platformSettings } = useQuery({
     queryKey: ["platform_settings_public"],
@@ -40,9 +53,20 @@ export default function Layout({ children }) {
         .eq("id", 1)
         .maybeSingle();
       if (error) throw error;
+      if (data && typeof window !== "undefined") {
+        try {
+          localStorage.setItem(platformSettingsCacheKey, JSON.stringify(data));
+        } catch {
+          // ignore cache write failures
+        }
+      }
       return data ?? null;
     },
     staleTime: 1000 * 60 * 5,
+    initialData: cachedPlatformSettings ?? undefined,
+    initialDataUpdatedAt: cachedPlatformSettings?.updated_at
+      ? new Date(cachedPlatformSettings.updated_at).getTime()
+      : 0,
   });
 
   const appName = platformSettings?.app_name || "Okalab";

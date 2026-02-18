@@ -76,19 +76,18 @@ function SeminarsContent() {
     return categoryMatch && modalityMatch && searchMatch && languageMatch;
   });
 
-  const { data: seminarReviews = [] } = useQuery({
-    queryKey: ["seminar-reviews", seminarIds],
+  const { data: seminarRatingStats = [] } = useQuery({
+    queryKey: ["seminar-rating-stats", seminarIds],
     enabled: seminarIds.length > 0,
     queryFn: async () => {
       try {
-        const { data, error } = await supabase
-          .from("seminar_reviews")
-          .select("seminar_id,rating")
-          .in("seminar_id", seminarIds);
+        const { data, error } = await supabase.rpc("get_seminar_rating_stats", {
+          seminar_ids: seminarIds,
+        });
         if (error) throw error;
         return data ?? [];
       } catch (err) {
-        console.warn("seminar reviews error", err?.message || err);
+        console.warn("seminar rating stats error", err?.message || err);
         return [];
       }
     },
@@ -97,20 +96,17 @@ function SeminarsContent() {
 
   const ratingBySeminar = useMemo(() => {
     const map = {};
-    (seminarReviews || []).forEach((row) => {
+    (seminarRatingStats || []).forEach((row) => {
       if (!row?.seminar_id) return;
-      if (!map[row.seminar_id]) map[row.seminar_id] = { sum: 0, count: 0 };
-      map[row.seminar_id].sum += Number(row.rating || 0);
-      map[row.seminar_id].count += 1;
+      map[row.seminar_id] = {
+        avg: Number(row.avg_rating || 0),
+        count: Number(row.review_count || 0),
+      };
     });
     return map;
-  }, [seminarReviews]);
+  }, [seminarRatingStats]);
 
-  const getRating = (id) => {
-    const data = ratingBySeminar[id];
-    if (!data || !data.count) return { avg: 0, count: 0 };
-    return { avg: data.sum / data.count, count: data.count };
-  };
+  const getRating = (id) => ratingBySeminar[id] || { avg: 0, count: 0 };
 
   return (
     <div className="min-h-screen bg-slate-50">

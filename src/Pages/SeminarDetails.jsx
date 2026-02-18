@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
@@ -115,6 +115,7 @@ export default function SeminarDetails() {
   });
 
   const { t, language } = useLanguage();
+  const defaultMetaRef = useRef(null);
 
   const { data: platformSettings } = useQuery({
     queryKey: ["platform_settings_public_fees"],
@@ -204,19 +205,18 @@ export default function SeminarDetails() {
   const maxStudents = Number(seminar?.max_students || 0);
   const isFull = Number.isFinite(maxStudents) && maxStudents > 0 && enrollmentCount >= maxStudents;
 
-  const { data: seminarReviews = [] } = useQuery({
-    queryKey: ["seminar-reviews", seminarId],
+  const { data: ratingRows = [] } = useQuery({
+    queryKey: ["seminar-rating-stats", seminarId],
     enabled: !!seminarId,
     queryFn: async () => {
       try {
-        const { data, error } = await supabase
-          .from("seminar_reviews")
-          .select("rating")
-          .eq("seminar_id", seminarId);
+        const { data, error } = await supabase.rpc("get_seminar_rating_stats", {
+          seminar_ids: [seminarId],
+        });
         if (error) throw error;
         return data ?? [];
       } catch (err) {
-        console.warn("seminar reviews error", err?.message || err);
+        console.warn("seminar rating stats error", err?.message || err);
         return [];
       }
     },
@@ -224,10 +224,14 @@ export default function SeminarDetails() {
   });
 
   const ratingStats = useMemo(() => {
-    if (!seminarReviews?.length) return { avg: 0, count: 0 };
-    const sum = seminarReviews.reduce((acc, row) => acc + Number(row.rating || 0), 0);
-    return { avg: sum / seminarReviews.length, count: seminarReviews.length };
-  }, [seminarReviews]);
+    const row = Array.isArray(ratingRows) ? ratingRows[0] : ratingRows;
+    const avg = Number(row?.avg_rating);
+    const count = Number(row?.review_count);
+    return {
+      avg: Number.isFinite(avg) ? avg : 0,
+      count: Number.isFinite(count) ? count : 0,
+    };
+  }, [ratingRows]);
 
   const userEnrollment = useMemo(() => {
     if (!user) return null;
@@ -239,6 +243,79 @@ export default function SeminarDetails() {
   const isAdmin = role === "admin";
   const isOwner = !!user && (seminar?.professor_id === user.id || seminar?.instructor_id === user.id);
   const isOwnerProfessor = isOwner && (role === "professor" || role === "teacher" || role === "" || role === "instructor");
+
+  useEffect(() => {
+    if (!seminar) return;
+
+    const appBasePath = (import.meta.env.VITE_BASE_PATH || "/").replace(/\/$/, "");
+    const publicBaseUrl =
+      import.meta.env.VITE_PUBLIC_URL ||
+      `${window.location.origin}${appBasePath === "/" ? "" : appBasePath}`;
+    const defaultImage = `${publicBaseUrl}/assets/hero.webp`;
+
+    const rawDescription =
+      seminar?.short_description ||
+      seminar?.description ||
+      t(
+        "seminar_meta_description_fallback",
+        "Seminarios colaborativos donde todos ganan: profesores reciben su ingreso objetivo y estudiantes pagan menos."
+      );
+    const description = String(rawDescription).replace(/\s+/g, " ").trim().slice(0, 160);
+
+    const title = `${seminar.title} | Okalab`;
+    const ogImage = normalizeImageUrl(seminar?.image_url, defaultImage);
+    const ogUrl = `${publicBaseUrl}/seminars/${seminarId}`;
+
+    const getMeta = (attr, key) =>
+      document.querySelector(`meta[${attr}="${key}"]`)?.getAttribute("content") || "";
+    const setMeta = (attr, key, value) => {
+      let el = document.querySelector(`meta[${attr}="${key}"]`);
+      if (!el) {
+        el = document.createElement("meta");
+        el.setAttribute(attr, key);
+        document.head.appendChild(el);
+      }
+      el.setAttribute("content", value);
+    };
+
+    if (!defaultMetaRef.current) {
+      defaultMetaRef.current = {
+        title: document.title,
+        description: getMeta("name", "description"),
+        ogTitle: getMeta("property", "og:title"),
+        ogDescription: getMeta("property", "og:description"),
+        ogImage: getMeta("property", "og:image"),
+        ogUrl: getMeta("property", "og:url"),
+        twitterTitle: getMeta("name", "twitter:title"),
+        twitterDescription: getMeta("name", "twitter:description"),
+        twitterImage: getMeta("name", "twitter:image"),
+      };
+    }
+
+    document.title = title;
+    setMeta("name", "description", description);
+    setMeta("property", "og:title", title);
+    setMeta("property", "og:description", description);
+    setMeta("property", "og:image", ogImage);
+    setMeta("property", "og:url", ogUrl);
+    setMeta("name", "twitter:title", title);
+    setMeta("name", "twitter:description", description);
+    setMeta("name", "twitter:image", ogImage);
+
+    return () => {
+      const defaults = defaultMetaRef.current;
+      if (!defaults) return;
+      document.title = defaults.title || "Okalab";
+      setMeta("name", "description", defaults.description || "");
+      setMeta("property", "og:title", defaults.ogTitle || "");
+      setMeta("property", "og:description", defaults.ogDescription || "");
+      setMeta("property", "og:image", defaults.ogImage || "");
+      setMeta("property", "og:url", defaults.ogUrl || "");
+      setMeta("name", "twitter:title", defaults.twitterTitle || "");
+      setMeta("name", "twitter:description", defaults.twitterDescription || "");
+      setMeta("name", "twitter:image", defaults.twitterImage || "");
+    };
+  }, [seminar, seminarId, t]);
 
   useEffect(() => {
     if (!userEnrollment) return;
@@ -405,7 +482,8 @@ const payMutation = useMutation({
   };
 
   const ModalityIcon = seminar ? (modalityIcons[seminar.modality] || Monitor) : Monitor;
-  const fallbackHeroImage = "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=1200";
+  const assetBase = import.meta.env.BASE_URL || "/";
+  const fallbackHeroImage = `${assetBase}assets/hero.webp`;
   const heroImageSrc = normalizeImageUrl(seminar?.image_url, fallbackHeroImage);
 
   if (isLoading) {

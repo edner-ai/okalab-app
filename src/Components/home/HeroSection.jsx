@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ArrowRight, Users, DollarSign } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../../utils';
@@ -11,6 +11,20 @@ import { Button } from '../ui/button';
 export default function HeroSection({ professorCtaHref }) {
   const { t } = useLanguage();
   const ctaHref = professorCtaHref || createPageUrl('CreateSeminar');
+  const assetBase = import.meta.env.BASE_URL || "/";
+  const heroImageSrc = `${assetBase}assets/hero.webp`;
+  const statsCacheKey = "home_stats_cache";
+  const cachedStats = useMemo(() => {
+    try {
+      const raw = localStorage.getItem(statsCacheKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (err) {
+      console.warn("home stats cache parse error", err?.message || err);
+      return null;
+    }
+  }, []);
 
   const { data: stats, isLoading: statsLoading, isFetching: statsFetching } = useQuery({
     queryKey: ['home-stats'],
@@ -24,17 +38,28 @@ export default function HeroSection({ professorCtaHref }) {
         const seminars = Number(row?.seminars_count);
         const satisfactionPct = Number(row?.satisfaction_pct);
 
-        return {
+        const normalized = {
           students: Number.isFinite(students) ? students : null,
           seminars: Number.isFinite(seminars) ? seminars : null,
           satisfactionPct: Number.isFinite(satisfactionPct) ? satisfactionPct : null,
         };
+        try {
+          localStorage.setItem(
+            statsCacheKey,
+            JSON.stringify({ data: normalized, updatedAt: Date.now() })
+          );
+        } catch {
+          // ignore caching errors
+        }
+        return normalized;
       } catch (err) {
         console.warn('home stats error', err?.message || err);
         return { students: null, seminars: null, satisfactionPct: null };
       }
     },
-    staleTime: 1000 * 60 * 5
+    staleTime: 1000 * 60 * 5,
+    initialData: cachedStats?.data ?? undefined,
+    initialDataUpdatedAt: cachedStats?.updatedAt || 0,
   });
 
   const statsReady = !statsLoading && !statsFetching;
@@ -140,9 +165,11 @@ export default function HeroSection({ professorCtaHref }) {
               <div className="absolute -inset-4 bg-gradient-to-r from-blue-500 to-purple-500 rounded-3xl blur-2xl opacity-20" />
               <div className="relative bg-white/10 backdrop-blur-xl rounded-3xl p-8 border border-white/20">
                 <img 
-                  src="https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=800"
+                  src={heroImageSrc}
                   alt={t('hero_image_alt', 'Students learning')}
                   className="rounded-2xl shadow-2xl"
+                  loading="eager"
+                  decoding="async"
                 />
                 
                 {/* Badge Ahorro */}

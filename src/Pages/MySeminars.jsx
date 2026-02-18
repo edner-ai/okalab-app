@@ -54,6 +54,18 @@ const payBadgeColors = {
   rejected: "bg-red-100 text-red-700"
 };
 
+const assetBase = import.meta.env.BASE_URL || "/";
+const fallbackImage = `${assetBase}assets/hero.webp`;
+
+const normalizeImageUrl = (url, fallback) => {
+  if (!url) return fallback;
+  const clean = String(url).split("?")[0];
+  if (clean.includes("/storage/v1/object/sign/")) {
+    return clean.replace("/storage/v1/object/sign/", "/storage/v1/object/public/");
+  }
+  return url;
+};
+
 function tStatus(status, t) {
   const map = {
     all: t?.("all", "Todos") ?? "Todos",
@@ -344,10 +356,7 @@ export default function MySeminars() {
                           <div className="flex flex-col md:flex-row gap-6">
                             <div className="w-full md:w-40 h-32 rounded-xl overflow-hidden bg-slate-100 flex-shrink-0">
                               <img
-                                src={
-                                  seminar.image_url ||
-                                  "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=400"
-                                }
+                                src={normalizeImageUrl(seminar.image_url, fallbackImage)}
                                 alt={seminar.title}
                                 className="w-full h-full object-cover"
                               />
@@ -680,10 +689,7 @@ export default function MySeminars() {
                         <div className="flex flex-col md:flex-row gap-6">
                           <div className="w-full md:w-40 h-32 rounded-xl overflow-hidden bg-slate-100 flex-shrink-0">
                             <img
-                              src={
-                                seminar.image_url ||
-                                "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=400"
-                              }
+                              src={normalizeImageUrl(seminar.image_url, fallbackImage)}
                               alt={seminar.title}
                               className="w-full h-full object-cover"
                             />
