@@ -32,7 +32,7 @@ export default function Home() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('seminars')
-        .select('id,title,target_income,category,modality,start_date,total_hours,image_url,created_at')
+        .select('id,title,target_income,target_students,price,category,modality,start_date,total_hours,image_url,created_at')
         .eq('status', 'published')
         .order('created_at', { ascending: false })
         .limit(6);
@@ -196,17 +196,32 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer className="py-12 bg-slate-900 border-t border-slate-800">
+      <footer className="py-8 bg-slate-900 border-t border-slate-800">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center">
                 <span className="text-white font-bold text-lg">O</span>
               </div>
-              <span className="text-white font-bold text-xl">Okalab</span>
+              <div className="text-white font-bold text-xl">Okalab</div>
+              <span className="text-slate-400 text-sm hidden sm:inline">
+                © {new Date().getFullYear()} Okalab. {t('allRightsReserved', 'Todos los derechos reservados.')}
+              </span>
             </div>
 
-            <p className="text-slate-400 text-sm">
+            <div className="flex items-center gap-4 text-sm text-slate-400">
+              <Link to="/privacy" className="hover:text-white transition-colors">
+                {t("privacy", "Privacidad")}
+              </Link>
+              <Link to="/terms" className="hover:text-white transition-colors">
+                {t("terms", "Términos")}
+              </Link>
+              <Link to="/support" className="hover:text-white transition-colors">
+                {t("support", "Soporte")}
+              </Link>
+            </div>
+
+            <p className="text-slate-400 text-sm sm:hidden">
               © {new Date().getFullYear()} Okalab. {t('allRightsReserved', 'Todos los derechos reservados.')}
             </p>
           </div>

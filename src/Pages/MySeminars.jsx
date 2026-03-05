@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../Components/ui/card"
 import { Badge } from "../Components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "../Components/ui/tabs";
 import { Input } from "../Components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../Components/ui/dialog";
 
 import {
   ArrowLeft,
@@ -18,6 +19,9 @@ import {
   Calendar,
   Clock,
   Eye,
+  Share2,
+  Copy,
+  Check,
   Trash2,
   MoreVertical,
   Loader2,
@@ -27,7 +31,10 @@ import {
 } from "lucide-react";
 
 import { format } from "date-fns";
-import { es } from "date-fns/locale";
+import { getDateFnsLocale } from "../utils/dateLocale";
+import { buildPublicAppUrl } from "../utils/appUrl";
+import { parseDateValue } from "../utils/dateValue";
+import { resolvePaymentWindow } from "../utils/paymentWindow";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -37,6 +44,8 @@ import {
   DropdownMenuTrigger,
 } from "../Components/ui/dropdown-menu";
 import { toast } from "sonner";
+import { getPaymentStatusLabel, normalizePayStatus } from "../utils/paymentStatus";
+import PaymentWindowCountdown from "../Components/seminars/PaymentWindowCountdown";
 
 const statusColors = {
   draft: "bg-slate-100 text-slate-700",
@@ -50,8 +59,10 @@ const payBadgeColors = {
   paid: "bg-emerald-100 text-emerald-700",
   pending: "bg-amber-100 text-amber-700",
   pending_payment: "bg-amber-100 text-amber-700",
+  unpaid: "bg-sky-100 text-sky-700",
   failed: "bg-red-100 text-red-700",
-  rejected: "bg-red-100 text-red-700"
+  rejected: "bg-red-100 text-red-700",
+  expired: "bg-slate-200 text-slate-600"
 };
 
 const assetBase = import.meta.env.BASE_URL || "/";
@@ -78,11 +89,14 @@ function tStatus(status, t) {
   return map[status] || status;
 }
 
-const normalizePayStatus = (s) => (s || "").toLowerCase().trim();
+function isPendingLikeStatus(status) {
+  return !status || ["pending", "pending_payment", "unpaid", "rejected"].includes(status);
+}
 
 export default function MySeminars() {
   const { user, loading, role } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const dateLocale = useMemo(() => getDateFnsLocale(language), [language]);
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -93,6 +107,10 @@ export default function MySeminars() {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedSeminar, setSelectedSeminar] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [shareLink, setShareLink] = useState("");
+  const [shareTitle, setShareTitle] = useState("");
+  const [shareCopied, setShareCopied] = useState(false);
 
   // -------- PROF/ADMIN: seminarios creados --------
   const { data: mySeminars = [], isLoading: seminarsLoading } = useQuery({
@@ -167,6 +185,39 @@ export default function MySeminars() {
     },
   });
 
+  const { data: enrolledSeminarStats = [], isLoading: enrolledSeminarStatsLoading } = useQuery({
+    queryKey: ["seminar-enrollment-counts", enrolledSeminarIds.join(",")],
+    enabled: !!user && !loading && !isProfessor && enrolledSeminarIds.length > 0,
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase.rpc("get_seminar_enrollment_counts", {
+          seminar_ids: enrolledSeminarIds,
+        });
+        if (error) throw error;
+        return data ?? [];
+      } catch (err) {
+        console.warn("student seminar enrollment counts error", err?.message || err);
+        return [];
+      }
+    },
+    staleTime: 1000 * 60 * 2,
+  });
+
+
+  const { data: paymentWindowSettings } = useQuery({
+    queryKey: ["platform_settings_payment_window"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("platform_settings")
+        .select("*")
+        .eq("id", 1)
+        .maybeSingle();
+      if (error) throw error;
+      return data ?? { payment_open_days: 7, payment_close_days: 2 };
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+
   const enrollmentBySeminarId = useMemo(() => {
     const map = new Map();
     for (const e of myEnrollments) {
@@ -175,6 +226,16 @@ export default function MySeminars() {
     }
     return map;
   }, [myEnrollments]);
+
+  const enrolledCountBySeminarId = useMemo(() => {
+    const map = new Map();
+    for (const row of enrolledSeminarStats || []) {
+      if (!row?.seminar_id) continue;
+      const count = Number(row?.enrolled_count);
+      map.set(row.seminar_id, Number.isFinite(count) ? count : 0);
+    }
+    return map;
+  }, [enrolledSeminarStats]);
 
   // -------- Mutations (prof/admin) --------
   const deleteMutation = useMutation({
@@ -216,6 +277,42 @@ export default function MySeminars() {
     return paid.reduce((sum, e) => sum + (Number(e.amount_paid) || Number(e.final_price) || 0), 0);
   };
 
+  const openShareDialog = (seminar) => {
+    if (!seminar?.id) return;
+    const link = buildPublicAppUrl(`/seminars/${seminar.id}`);
+    setShareLink(link);
+    setShareTitle(seminar?.title || "");
+    setShareCopied(false);
+    setShareDialogOpen(true);
+  };
+
+  const shareMessage = shareLink
+    ? `${t("share_professor_message", "Te invito a este seminario en Okalab:")}\n${shareLink}`
+    : "";
+  const waShare = shareLink ? `https://wa.me/?text=${encodeURIComponent(shareMessage)}` : "#";
+  const tgShare = shareLink
+    ? `https://t.me/share/url?url=${encodeURIComponent(shareLink)}&text=${encodeURIComponent(shareMessage)}`
+    : "#";
+  const fbShare = shareLink ? `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareLink)}` : "#";
+  const lnShare = shareLink ? `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareLink)}` : "#";
+  const xShare = shareLink ? `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareMessage)}` : "#";
+  const emailShare = shareLink
+    ? `mailto:?subject=${encodeURIComponent(shareTitle ? `Okalab: ${shareTitle}` : "Okalab")}&body=${encodeURIComponent(shareMessage)}`
+    : "#";
+  const canNativeShare = typeof navigator !== "undefined" && !!navigator.share;
+  const handleNativeShare = async () => {
+    if (!canNativeShare || !shareLink) return;
+    try {
+      await navigator.share({
+        title: shareTitle || "Okalab",
+        text: t("share_professor_message", "Te invito a este seminario en Okalab:"),
+        url: shareLink,
+      });
+    } catch {
+      // usuario canceló o error
+    }
+  };
+
   // -------- UI states --------
   if (loading || !user) {
     return (
@@ -229,25 +326,25 @@ export default function MySeminars() {
   // STUDENT MODE (como captura VIEJO izquierda)
   // =========================
   if (!isProfessor) {
-    const listLoading = myEnrollmentsLoading || enrolledSeminarsLoading;
+    const listLoading = myEnrollmentsLoading || enrolledSeminarsLoading || enrolledSeminarStatsLoading;
 
-    const filtered = (() => {
-      if (activeTab === "all") return enrolledSeminars;
-      // "pending" debe incluir pending y pending_payment
-      return enrolledSeminars.filter((s) => {
-        const e = enrollmentBySeminarId.get(s.id);
-        const ps = normalizePayStatus(e?.payment_status || e?.status);
-        if (activeTab === "pending") return ps === "pending" || ps === "pending_payment" || !ps;
-        return ps === activeTab;
-      });
-    })();
+	    const filtered = (() => {
+	      if (activeTab === "all") return enrolledSeminars;
+	      // "pending" también cubre reservas y pagos rechazados por reintentar.
+	      return enrolledSeminars.filter((s) => {
+	        const e = enrollmentBySeminarId.get(s.id);
+	        const ps = normalizePayStatus(e?.payment_status || e?.status);
+	        if (activeTab === "pending") return isPendingLikeStatus(ps);
+	        return ps === activeTab;
+	      });
+	    })();
 
     const totalEnrolls = myEnrollments.length;
-    const paidCount = myEnrollments.filter((e) => normalizePayStatus(e.payment_status || e.status) === "paid").length;
-    const pendingCount = myEnrollments.filter((e) => {
-      const ps = normalizePayStatus(e.payment_status || e.status);
-      return ps === "pending" || ps === "pending_payment" || !ps;
-    }).length;
+	    const paidCount = myEnrollments.filter((e) => normalizePayStatus(e.payment_status || e.status) === "paid").length;
+	    const pendingCount = myEnrollments.filter((e) => {
+	      const ps = normalizePayStatus(e.payment_status || e.status);
+	      return isPendingLikeStatus(ps);
+	    }).length;
 
     return (
       <div className="min-h-screen bg-slate-50 py-8">
@@ -323,24 +420,55 @@ export default function MySeminars() {
                   const e = enrollmentBySeminarId.get(seminar.id);
                   const ps = normalizePayStatus(e?.payment_status || e?.status);
                   const payState = ps || "pending";
+                  const payLabel = getPaymentStatusLabel(payState, t);
 
-                  const startDate = seminar.start_date ? new Date(seminar.start_date) : null;
-                  const dueDays = Number(seminar.payment_due_days ?? 0);
+                  const enrollmentCount = Number(enrolledCountBySeminarId.get(seminar.id) ?? 0);
+                  const maxStudents = Number(seminar?.max_students || 0);
+                  const isFull = Number.isFinite(maxStudents) && maxStudents > 0 && enrollmentCount >= maxStudents;
 
-                  // condición A: objetivo lleno
-                  const hasTarget = Number(seminar.target_students ?? 0) > 0;
+                  const paymentWindow = resolvePaymentWindow({
+                    seminarStartDate: seminar.start_date,
+                    settings: paymentWindowSettings,
+                    forcePayOpen: isFull,
+                  });
+                  const {
+                    paymentOpenDate,
+                    paymentCloseDate,
+                    isPaymentWindowClosed,
+                    canPayNow,
+                    isPaymentOpenByCapacity,
+                  } = paymentWindow;
 
-                  // condición B: ya estamos dentro de X días antes del inicio
-                  const canPayByDate = startDate
-                    ? new Date() >= new Date(startDate.getTime() - dueDays * 24 * 60 * 60 * 1000)
-                    : false;
+	                  const formatWindowDate = (value) =>
+	                    value ? format(value, "PPP", { locale: dateLocale }) : "—";
 
-                  const canSeePayButton = hasTarget || canPayByDate;
+                  const paymentWindowText = isPaymentWindowClosed
+                    ? t("payment_window_closed_note", "La ventana de pago cerró el {close}.").replace(
+                        "{close}",
+                        formatWindowDate(paymentCloseDate)
+                      )
+                    : isPaymentOpenByCapacity
+                      ? t(
+                          "payment_window_full_note",
+                          "Cupos completos: los pagos ya están habilitados y cierran el {close}."
+                        ).replace("{close}", formatWindowDate(paymentCloseDate))
+                      : canPayNow
+                        ? t("payment_window_open_note", "Pagos abiertos del {open} al {close}.")
+                            .replace("{open}", formatWindowDate(paymentOpenDate))
+                            .replace("{close}", formatWindowDate(paymentCloseDate))
+                        : t(
+                            "payment_window_upcoming_note",
+                            "Pagos abrirán el {open} y cierran el {close}. Hasta entonces solo reservas tu cupo."
+                          )
+                            .replace("{open}", formatWindowDate(paymentOpenDate))
+                            .replace("{close}", formatWindowDate(paymentCloseDate));
 
-                  // estados del enrollment en los que el estudiante puede pagar
-                  const isPayableState = ["unpaid", "pending", "pending_payment"].includes(payState);
-
-                  const showPayBtn = e?.id && canSeePayButton && isPayableState;
+	                  const isPayActionableState = ["unpaid", "rejected"].includes(payState);
+	                  const isPendingReviewState = ["pending", "pending_payment"].includes(payState);
+                  const showPayBtn = e?.id && isPayActionableState && canPayNow;
+                  const showUpcomingPayBtn =
+                    e?.id && isPayActionableState && !canPayNow && !isPaymentWindowClosed && !!paymentOpenDate;
+                  const showClosedPayBtn = e?.id && isPayActionableState && isPaymentWindowClosed;
 
 
                   return (
@@ -364,14 +492,16 @@ export default function MySeminars() {
 
                             <div className="flex-1 min-w-0">
                               <div className="flex items-start justify-between gap-4">
-                                <div>
-                                  <Badge className={payBadgeColors[payState] || payBadgeColors.pending}>
-                                    {payState === "paid"
-                                      ? t("payment_confirmed", "Pago confirmado")
-                                      : payState === "rejected"
-                                        ? t("payment_rejected", "Pago rechazado")
-                                        : t("payment_pending", "Pago pendiente")}
-                                  </Badge>
+	                                <div>
+	                                  <Badge className={payBadgeColors[payState] || payBadgeColors.pending}>
+	                                    {payState === "paid"
+	                                      ? t("payment_confirmed", "Pago confirmado")
+	                                      : payState === "unpaid"
+	                                        ? t("payment_reserved", "Cupo reservado")
+	                                      : payState === "rejected"
+	                                        ? t("payment_rejected", "Pago rechazado")
+	                                        : t("payment_pending", "Pago pendiente")}
+	                                  </Badge>
                                   <h3 className="text-lg font-bold text-slate-900 mt-2 line-clamp-1">
                                     {seminar.title}
                                   </h3>
@@ -385,35 +515,88 @@ export default function MySeminars() {
                                     </Button>
                                   </Link>
 
-                                  {showPayBtn && (
-                                    <Button
-                                      size="sm"
-                                      className="bg-slate-900 hover:bg-slate-800"
-                                      onClick={() => navigate(`/process-payment?enrollment_id=${e.id}`)}
+	                                  {showPayBtn && (
+	                                    <Button
+	                                      size="sm"
+	                                      className="bg-slate-900 hover:bg-slate-800"
+	                                      onClick={() => navigate(`/process-payment?enrollment_id=${e.id}`)}
                                     >
                                       <CreditCard className="h-4 w-4 mr-2" />
-                                      {t("pay", "Pagar")}
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
+	                                      {t("pay", "Pagar")}
+	                                    </Button>
+	                                  )}
 
-                              <div className="flex flex-wrap gap-4 mt-4 text-sm text-slate-600">
+                                      {showUpcomingPayBtn && (
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          disabled
+                                          className="cursor-not-allowed"
+                                        >
+                                          {t("payment_opens_soon", "Pagar pronto")}
+                                        </Button>
+                                      )}
+
+                                      {showClosedPayBtn && (
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          disabled
+                                          className="cursor-not-allowed"
+                                        >
+                                          {t("payment_window_closed_button", "Ventana cerrada")}
+                                        </Button>
+                                      )}
+	                                </div>
+	                              </div>
+
+	                              <div className="flex flex-wrap gap-4 mt-4 text-sm text-slate-600">
                                 <div className="flex items-center gap-1.5">
                                   <Calendar className="h-4 w-4" />
                                   <span>
                                     {seminar.start_date
-                                      ? format(new Date(seminar.start_date), "MMM d", { locale: es })
+                                      ? format(parseDateValue(seminar.start_date), "MMM d", { locale: dateLocale })
                                       : "—"}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1.5">
                                   <Clock className="h-4 w-4" />
                                   <span>{seminar.total_hours || 0} {t("hours", "horas")}</span>
-                                </div>
-                              </div>
+	                                </div>
+	                              </div>
 
-                              <div className="flex items-center gap-6 mt-4 pt-4 border-t">
+                                  {isPayActionableState && (
+                                    <div className="mt-4 space-y-3">
+                                      <div
+                                        className={`rounded-xl px-3 py-3 text-sm ${
+                                          canPayNow
+                                            ? "bg-emerald-50 text-emerald-900"
+                                            : isPaymentWindowClosed
+                                              ? "bg-amber-50 text-amber-900"
+                                              : "bg-sky-50 text-sky-900"
+                                        }`}
+                                      >
+                                        {paymentWindowText}
+                                      </div>
+
+                                      {!isPaymentWindowClosed ? (
+                                        <PaymentWindowCountdown
+                                          targetDate={canPayNow ? paymentCloseDate : paymentOpenDate}
+                                          mode={canPayNow ? "close" : "open"}
+                                          compact
+                                          t={t}
+                                        />
+                                      ) : null}
+                                    </div>
+                                  )}
+
+                                  {isPendingReviewState && (
+                                    <div className="mt-4 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                                      {t("payment_submitted", "Pago registrado. Pendiente de validación.")}
+                                    </div>
+                                  )}
+
+	                              <div className="flex items-center gap-6 mt-4 pt-4 border-t">
                                 <div>
                                   <p className="text-xs text-slate-500">{t("your_amount", "Tu monto")}</p>
                                   <p className="font-bold text-slate-900">
@@ -422,7 +605,7 @@ export default function MySeminars() {
                                 </div>
                                 <div>
                                   <p className="text-xs text-slate-500">{t("status", "Estado")}</p>
-                                  <p className="font-bold text-slate-900">{payState}</p>
+                                  <p className="font-bold text-slate-900">{payLabel}</p>
                                 </div>
                               </div>
                             </div>
@@ -475,6 +658,14 @@ export default function MySeminars() {
                     </div>
                   </div>
                   <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openShareDialog(selectedSeminar)}
+                    >
+                      <Share2 className="h-4 w-4 mr-2" />
+                      {t("invite", "Invitar")}
+                    </Button>
                     <Link to={`/seminars/${selectedSeminar.id}`}>
                       <Button variant="outline" size="sm">
                         <Eye className="h-4 w-4 mr-2" />
@@ -505,6 +696,7 @@ export default function MySeminars() {
                   seminarEnrollments.map((e) => {
 
                     const ps = normalizePayStatus(e.payment_status || e.status);
+                    const payLabel = getPaymentStatusLabel(ps, t);
                     const amount = Number(e.final_price ?? e.amount_paid ?? 0);
 
                     const showAdminPayBtn =
@@ -520,7 +712,7 @@ export default function MySeminars() {
                         <div className="min-w-0">
                           <p className="font-medium text-slate-900 truncate">{e.student_id}</p>
                           <p className="text-xs text-slate-500">
-                            {t("payment", "Pago")}: <b>{ps || "—"}</b> · {t("amount", "Monto")}:{" "}
+                            {t("payment", "Pago")}: <b>{payLabel}</b> · {t("amount", "Monto")}:{" "}
                             <b>${Number(e.final_price ?? e.amount_paid ?? 0).toFixed(2)}</b>
                           </p>
                         </div>
@@ -544,6 +736,61 @@ export default function MySeminars() {
                 )}
               </CardContent>
             </Card>
+
+            <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>{t("invite", "Invitar")}</DialogTitle>
+                </DialogHeader>
+
+                <div className="space-y-4 py-2">
+                  <p className="text-slate-600 text-sm">
+                    {t("share_professor_note", "Comparte este enlace para invitar estudiantes (sin referidos).")}
+                  </p>
+
+                  <div className="flex gap-2">
+                    <Input readOnly value={shareLink} className="bg-slate-50" />
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        if (!shareLink) return;
+                        navigator.clipboard.writeText(shareLink);
+                        setShareCopied(true);
+                        setTimeout(() => setShareCopied(false), 2000);
+                      }}
+                    >
+                      {shareCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button asChild variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50">
+                      <a href={waShare} target="_blank" rel="noopener noreferrer">WhatsApp</a>
+                    </Button>
+                    <Button asChild variant="outline" className="border-sky-200 text-sky-700 hover:bg-sky-50">
+                      <a href={tgShare} target="_blank" rel="noopener noreferrer">Telegram</a>
+                    </Button>
+                    <Button asChild variant="outline" className="border-blue-200 text-blue-700 hover:bg-blue-50">
+                      <a href={fbShare} target="_blank" rel="noopener noreferrer">Facebook</a>
+                    </Button>
+                    <Button asChild variant="outline" className="border-sky-200 text-sky-700 hover:bg-sky-50">
+                      <a href={lnShare} target="_blank" rel="noopener noreferrer">LinkedIn</a>
+                    </Button>
+                    <Button asChild variant="outline" className="border-slate-200 text-slate-700 hover:bg-slate-50">
+                      <a href={xShare} target="_blank" rel="noopener noreferrer">X</a>
+                    </Button>
+                    <Button asChild variant="outline" className="border-slate-200 text-slate-700 hover:bg-slate-50">
+                      <a href={emailShare}>Email</a>
+                    </Button>
+                    {canNativeShare && (
+                      <Button variant="outline" onClick={handleNativeShare}>
+                        {t("share_native", "Compartir")}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </div>
@@ -752,7 +999,7 @@ export default function MySeminars() {
                                 <Calendar className="h-4 w-4" />
                                 <span>
                                   {seminar.start_date
-                                    ? format(new Date(seminar.start_date), "MMM d", { locale: es })
+                                    ? format(parseDateValue(seminar.start_date), "MMM d", { locale: dateLocale })
                                     : "—"}
                                 </span>
                               </div>

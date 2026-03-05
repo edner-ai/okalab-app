@@ -4,6 +4,7 @@ import { Badge } from "../ui/badge";
 import { ArrowUpRight, ArrowDownLeft, Gift, Percent, ArrowDownToLine } from 'lucide-react';
 import { format } from 'date-fns';
 import { useLanguage } from '../shared/LanguageContext';
+import { getDateFnsLocale } from '../../utils/dateLocale';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const typeConfig = {
@@ -15,7 +16,8 @@ const typeConfig = {
 };
 
 export default function TransactionList({ transactions = [], loading }) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const dateLocale = getDateFnsLocale(language);
   
   return (
     <Card className="border-0 shadow-lg overflow-hidden">
@@ -55,7 +57,9 @@ export default function TransactionList({ transactions = [], loading }) {
                       <div>
                         <p className="font-bold text-slate-900 text-sm">{t(tx.type, tx.type)}</p>
                         <p className="text-[11px] text-slate-400 font-medium">
-                          {tx.created_at ? format(new Date(tx.created_at), 'MMM d, yyyy • HH:mm') : t('recent', 'Reciente')}
+                          {tx.created_at
+                            ? format(new Date(tx.created_at), 'MMM d, yyyy • HH:mm', { locale: dateLocale })
+                            : t('recent', 'Reciente')}
                         </p>
                       </div>
                     </div>

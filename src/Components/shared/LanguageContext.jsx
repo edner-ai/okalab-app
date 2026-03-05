@@ -46,6 +46,7 @@ export const DEFAULT_TRANSLATIONS = {
     pending: "Pendiente",
     confirmed: "Confirmado",
     paid: "Pagado",
+    held: "Retenido",
     seminar_income: "Ingreso de seminario",
     referral_bonus: "Bonus por referido",
     platform_fee: "Comisión plataforma",
@@ -102,7 +103,39 @@ export const DEFAULT_TRANSLATIONS = {
     collaborative: "Colaborativo",
     exploreSeminars: "Explorar Seminarios",
     beTeacher: "Ser Profesor",
-    viewAll: "Ver todos"
+    viewAll: "Ver todos",
+    login_chip: "Plataforma de seminarios colaborativos",
+    login_hero_learn: "Aprende,",
+    login_hero_collaborate: "Colabora",
+    login_hero_and: "y",
+    login_hero_earn: "Gana",
+    login_hero_subtitle: "Okalab conecta profesores y estudiantes en experiencias practicas donde todos ganan.",
+    login_social_soon: "Proximamente: Facebook.",
+    auth_create_account: "Crear una cuenta",
+    auth_welcome_back: "Bienvenido de nuevo",
+    auth_signup_subtitle: "Registrate para empezar a aprender y colaborar.",
+    auth_login_subtitle: "Inicia sesion para acceder a tu cuenta.",
+    auth_login: "Iniciar sesion",
+    auth_signup: "Registrarse",
+    auth_continue_google: "Continuar con Google",
+    auth_continue_facebook: "Continuar con Facebook",
+    auth_or_email: "o con email",
+    auth_email: "Email",
+    auth_password: "Contrasena",
+    auth_create_account_btn: "Crear cuenta",
+    auth_login_btn: "Entrar",
+    auth_legal_prefix: "Al continuar aceptas nuestros",
+    auth_terms: "Terminos de servicio",
+    auth_legal_and: "y",
+    auth_privacy: "Politica de privacidad",
+    auth_show_password: "Mostrar contrasena",
+    auth_hide_password: "Ocultar contrasena",
+    auth_invalid_login: "Email o contrasena incorrectos.",
+    auth_email_not_confirmed: "Debes confirmar tu correo antes de iniciar sesion.",
+    auth_signup_disabled: "El registro esta deshabilitado en este momento.",
+    auth_rate_limit: "Demasiados intentos. Espera un momento antes de volver a intentar.",
+    auth_error: "Error de autenticacion",
+    auth_signup_success: "Registro exitoso. Revisa tu email si pide confirmacion."
   },
   en: {
     home: "Home",
@@ -147,6 +180,7 @@ export const DEFAULT_TRANSLATIONS = {
     pending: "Pending",
     confirmed: "Confirmed",
     paid: "Paid",
+    held: "Held",
     seminar_income: "Seminar income",
     referral_bonus: "Referral bonus",
     platform_fee: "Platform fee",
@@ -203,7 +237,39 @@ export const DEFAULT_TRANSLATIONS = {
     collaborative: "Collaborative",
     exploreSeminars: "Explore Seminars",
     beTeacher: "Become a Teacher",
-    viewAll: "View all"
+    viewAll: "View all",
+    login_chip: "Collaborative seminar platform",
+    login_hero_learn: "Learn,",
+    login_hero_collaborate: "Collaborate",
+    login_hero_and: "and",
+    login_hero_earn: "Earn",
+    login_hero_subtitle: "Okalab connects teachers and students through practical experiences where everyone wins.",
+    login_social_soon: "Coming soon: Facebook.",
+    auth_create_account: "Create an account",
+    auth_welcome_back: "Welcome back",
+    auth_signup_subtitle: "Sign up to start learning and collaborating.",
+    auth_login_subtitle: "Sign in to access your account.",
+    auth_login: "Sign in",
+    auth_signup: "Register",
+    auth_continue_google: "Continue with Google",
+    auth_continue_facebook: "Continue with Facebook",
+    auth_or_email: "or with email",
+    auth_email: "Email",
+    auth_password: "Password",
+    auth_create_account_btn: "Create account",
+    auth_login_btn: "Enter",
+    auth_legal_prefix: "By continuing you accept our",
+    auth_terms: "Terms of Service",
+    auth_legal_and: "and",
+    auth_privacy: "Privacy Policy",
+    auth_show_password: "Show password",
+    auth_hide_password: "Hide password",
+    auth_invalid_login: "Incorrect email or password.",
+    auth_email_not_confirmed: "You must confirm your email before signing in.",
+    auth_signup_disabled: "Sign up is currently disabled.",
+    auth_rate_limit: "Too many attempts. Please wait a moment before trying again.",
+    auth_error: "Authentication error",
+    auth_signup_success: "Registration successful. Check your email if confirmation is required."
   },
   fr: {
     home: "Accueil",
@@ -248,6 +314,7 @@ export const DEFAULT_TRANSLATIONS = {
     pending: "En Attente",
     confirmed: "Confirmé",
     paid: "Payé",
+    held: "Retenu",
     seminar_income: "Revenu du séminaire",
     referral_bonus: "Bonus de parrainage",
     platform_fee: "Frais de plateforme",
@@ -304,7 +371,39 @@ export const DEFAULT_TRANSLATIONS = {
     collaborative: "Collaboratif",
     exploreSeminars: "Explorer les Séminaires",
     beTeacher: "Devenir Professeur",
-    viewAll: "Voir tout"
+    viewAll: "Voir tout",
+    login_chip: "Plateforme de seminaires collaboratifs",
+    login_hero_learn: "Apprenez,",
+    login_hero_collaborate: "Collaborez",
+    login_hero_and: "et",
+    login_hero_earn: "Gagnez",
+    login_hero_subtitle: "Okalab relie professeurs et etudiants dans des experiences pratiques ou tout le monde gagne.",
+    login_social_soon: "Bientot : Facebook.",
+    auth_create_account: "Creer un compte",
+    auth_welcome_back: "Bon retour",
+    auth_signup_subtitle: "Inscrivez-vous pour commencer a apprendre et collaborer.",
+    auth_login_subtitle: "Connectez-vous pour acceder a votre compte.",
+    auth_login: "Se connecter",
+    auth_signup: "S'inscrire",
+    auth_continue_google: "Continuer avec Google",
+    auth_continue_facebook: "Continuer avec Facebook",
+    auth_or_email: "ou avec email",
+    auth_email: "Email",
+    auth_password: "Mot de passe",
+    auth_create_account_btn: "Creer un compte",
+    auth_login_btn: "Entrer",
+    auth_legal_prefix: "En continuant, vous acceptez nos",
+    auth_terms: "Conditions d'utilisation",
+    auth_legal_and: "et",
+    auth_privacy: "Politique de confidentialite",
+    auth_show_password: "Afficher le mot de passe",
+    auth_hide_password: "Masquer le mot de passe",
+    auth_invalid_login: "Email ou mot de passe incorrect.",
+    auth_email_not_confirmed: "Vous devez confirmer votre email avant de vous connecter.",
+    auth_signup_disabled: "L'inscription est desactivee pour le moment.",
+    auth_rate_limit: "Trop de tentatives. Attendez un instant avant de recommencer.",
+    auth_error: "Erreur d'authentification",
+    auth_signup_success: "Inscription reussie. Verifiez votre email si une confirmation est requise."
   },
   ht: {
     home: "Akèy",
@@ -349,6 +448,7 @@ export const DEFAULT_TRANSLATIONS = {
     pending: "An Atant",
     confirmed: "Konfime",
     paid: "Peye",
+    held: "Kenbe",
     seminar_income: "Revni seminè",
     referral_bonus: "Bonifikasyon referans",
     platform_fee: "Frè platfòm",
@@ -404,13 +504,69 @@ export const DEFAULT_TRANSLATIONS = {
     collaborative: "Kolaboratif",
     exploreSeminars: "Eksplore Seminè yo",
     beTeacher: "Vin Pwofesè",
-    viewAll: "Gade tout"
+    viewAll: "Gade tout",
+    login_chip: "Platfom semin kolaboratif",
+    login_hero_learn: "Aprann,",
+    login_hero_collaborate: "Kolabore",
+    login_hero_and: "epi",
+    login_hero_earn: "Touche",
+    login_hero_subtitle: "Okalab konekte pwofese ak etidyan nan eksperyans pratik kote tout moun genyen.",
+    login_social_soon: "Talè konsa: Facebook.",
+    auth_create_account: "Kreye yon kont",
+    auth_welcome_back: "Byenvini anko",
+    auth_signup_subtitle: "Enskri pou komanse aprann ak kolabore.",
+    auth_login_subtitle: "Konekte pou jwenn akse ak kont ou.",
+    auth_login: "Konekte",
+    auth_signup: "Enskri",
+    auth_continue_google: "Kontinye ak Google",
+    auth_continue_facebook: "Kontinye ak Facebook",
+    auth_or_email: "oswa ak imel",
+    auth_email: "Email",
+    auth_password: "Modpas",
+    auth_create_account_btn: "Kreye kont",
+    auth_login_btn: "Antre",
+    auth_legal_prefix: "Le w kontinye, ou aksepte",
+    auth_terms: "Kondisyon itilizasyon",
+    auth_legal_and: "ak",
+    auth_privacy: "Politik konfidansyalite",
+    auth_show_password: "Montre modpas",
+    auth_hide_password: "Kache modpas",
+    auth_invalid_login: "Email oswa modpas pa korek.",
+    auth_email_not_confirmed: "Ou dwe konfime email ou anvan ou konekte.",
+    auth_signup_disabled: "Enskripsyon an dezaktive kounye a.",
+    auth_rate_limit: "Twop tantativ. Tann yon ti moman anvan ou eseye anko.",
+    auth_error: "Ere otantifikasyon",
+    auth_signup_success: "Enskripsyon reyisi. Tcheke email ou si konfimasyon obligatwa."
   }
 };
 
 const LanguageContext = createContext();
 const LANGS = ['es', 'en', 'fr', 'ht'];
 const CACHE_KEY = 'i18n_cache_v1';
+
+const normalizeLang = (value) => (LANGS.includes(value) ? value : 'es');
+
+const detectBrowserLanguage = () => {
+  if (typeof window === 'undefined') return 'es';
+
+  const stored = localStorage.getItem('preferred_language');
+  if (stored) return normalizeLang(stored);
+
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  const rawLangs = Array.isArray(navigator.languages) ? navigator.languages : [navigator.language];
+  const langs = rawLangs.filter(Boolean).map((lang) => lang.toLowerCase());
+
+  // Haiti: prefer Kreyòl by location or locale
+  if (tz === 'America/Port-au-Prince') return 'ht';
+  if (langs.some((lang) => lang.startsWith('ht'))) return 'ht';
+  if (langs.some((lang) => lang.includes('-ht'))) return 'ht';
+
+  if (langs.some((lang) => lang.startsWith('fr'))) return 'fr';
+  if (langs.some((lang) => lang.startsWith('en'))) return 'en';
+  if (langs.some((lang) => lang.startsWith('es'))) return 'es';
+
+  return 'es';
+};
 
 function buildMap(rows = []) {
   const map = { es: {}, en: {}, fr: {}, ht: {} };
@@ -425,7 +581,7 @@ function buildMap(rows = []) {
 
 export function LanguageProvider({ children }) {
   const { user, profile } = useAuth();
-  const [language, setLanguage] = useState(localStorage.getItem('preferred_language') || 'es');
+  const [language, setLanguage] = useState(detectBrowserLanguage);
   const [dbTranslations, setDbTranslations] = useState(() => {
     try {
       const cached = localStorage.getItem(CACHE_KEY);
@@ -438,6 +594,15 @@ export function LanguageProvider({ children }) {
   useEffect(() => {
     localStorage.setItem('preferred_language', language);
   }, [language]);
+
+  useEffect(() => {
+    if (!profile?.preferred_language) return;
+    const preferred = normalizeLang(profile.preferred_language);
+    if (preferred !== language) {
+      setLanguage(preferred);
+      localStorage.setItem('preferred_language', preferred);
+    }
+  }, [profile?.preferred_language, language]);
   
   const persistPreferredLanguage = async (lang) => {
     if (!user) return;
@@ -448,6 +613,12 @@ export function LanguageProvider({ children }) {
       .eq('id', user.id);
     if (error) {
       console.warn('preferred_language update error', error.message);
+    }
+    const { error: authError } = await supabase.auth.updateUser({
+      data: { preferred_language: lang, locale: lang },
+    });
+    if (authError) {
+      console.warn('auth preferred_language update error', authError.message);
     }
   };
 
@@ -476,8 +647,8 @@ export function LanguageProvider({ children }) {
   
   const t = (key, fallback) => {
     if (dbTranslations?.[language]?.[key]) return dbTranslations[language][key];
-    if (dbTranslations?.es?.[key]) return dbTranslations.es[key];
     if (DEFAULT_TRANSLATIONS[language]?.[key]) return DEFAULT_TRANSLATIONS[language][key];
+    if (dbTranslations?.es?.[key]) return dbTranslations.es[key];
     if (DEFAULT_TRANSLATIONS.es?.[key]) return DEFAULT_TRANSLATIONS.es[key];
     return fallback ?? key;
   };

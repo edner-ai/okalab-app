@@ -33,7 +33,10 @@ export default function ReviewPrompt() {
         if (enrollErr) throw enrollErr;
 
         const activeEnrollments = (enrollments || []).filter(
-          (e) => (e?.status || "") !== "cancelled" && (e?.payment_status || "") !== "cancelled"
+          (e) =>
+            (e?.status || "") !== "cancelled" &&
+            (e?.payment_status || "") !== "cancelled" &&
+            (e?.payment_status || "") !== "expired"
         );
         const seminarIds = Array.from(new Set(activeEnrollments.map((e) => e.seminar_id).filter(Boolean)));
         if (!seminarIds.length) return [];

@@ -15,6 +15,15 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
+const INCOME_TRANSACTION_TYPES = new Set([
+  "seminar_income",
+  "referral_bonus",
+  "surplus_distribution",
+  "professor_earning",
+  "professor_excess_bonus",
+  "ref_pool_to_professor",
+]);
+
 function money(n) {
   const value = Number(String(n ?? 0).replace(/,/g, ""));
   return `$${(Number.isFinite(value) ? value : 0).toFixed(2)}`;
@@ -125,6 +134,14 @@ export default function Wallet() {
   // Stats (similar a Base44)
   const referralCount = useMemo(
     () => transactions.filter((t) => t.type === "referral_bonus").length,
+    [transactions]
+  );
+
+  const heldReferralTotal = useMemo(
+    () =>
+      transactions
+        .filter((tx) => tx.type === "referral_bonus" && tx.status === "held")
+        .reduce((sum, tx) => sum + Number(tx.amount || 0), 0),
     [transactions]
   );
 
@@ -269,9 +286,7 @@ export default function Wallet() {
 
               <TabsContent value="income" className="mt-6">
                 <TransactionList
-                  transactions={transactions.filter((t) =>
-                    ["seminar_income", "referral_bonus", "surplus_distribution"].includes(t.type)
-                  )}
+                  transactions={transactions.filter((tx) => INCOME_TRANSACTION_TYPES.has(tx.type))}
                 />
               </TabsContent>
 
@@ -329,6 +344,21 @@ export default function Wallet() {
                       <p className="font-bold">{money(wallet?.total_withdrawn)}</p>
                     </div>
                   </div>
+
+                  {heldReferralTotal > 0 ? (
+                    <div className="rounded-xl border border-amber-300/20 bg-amber-400/10 p-3">
+                      <p className="text-sm font-medium text-amber-100">
+                        {t("wallet_held_referrals", "Bonos retenidos")}
+                      </p>
+                      <p className="text-2xl font-bold text-white">{money(heldReferralTotal)}</p>
+                      <p className="mt-1 text-xs text-white/70">
+                        {t(
+                          "wallet_held_referrals_help",
+                          "Se liberan cuando pagas tu inscripcion dentro de la ventana de pago."
+                        )}
+                      </p>
+                    </div>
+                  ) : null}
 
                   <Button
                     onClick={() => setShowWithdrawDialog(true)}

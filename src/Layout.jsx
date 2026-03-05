@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Outlet } from "react-router-dom";
 import { Button } from "./Components/ui/button";
@@ -12,6 +12,8 @@ import {
   Languages,
   GraduationCap,
   Plus,
+  Bell,
+  Shield,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -30,6 +32,7 @@ export default function Layout({ children }) {
   const { changeLanguage, t } = useLanguage();
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const platformSettingsCacheKey = "platform_settings_public";
   const cachedPlatformSettings = useMemo(() => {
     if (typeof window === "undefined") return null;
@@ -84,6 +87,7 @@ export default function Layout({ children }) {
 
   // ✅ Mantiene tu lógica visual: botón Crear solo si profesor/admin
   const isProfessor = canCreateSeminar;
+  const isAdmin = (profile?.role || "").toLowerCase() === "admin";
 
   // ✅ evita que el avatar “desaparezca”: siempre mostramos placeholder mientras carga
   const avatarLetter = useMemo(() => {
@@ -91,9 +95,73 @@ export default function Layout({ children }) {
     return letter || "U";
   }, [displayName]);
 
-  const handleSignOut = async () => {
-    await signOut();
+  const handleSignOut = () => {
+    signOut();
     navigate("/login", { replace: true });
+  };
+
+  const { data: notifications = [] } = useQuery({
+    queryKey: ["notifications", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("notifications")
+        .select("id,title,body,type,link,read_at,created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(10);
+      if (error) throw error;
+      return data ?? [];
+    },
+    staleTime: 1000 * 20,
+  });
+
+  const { data: unreadCount = 0 } = useQuery({
+    queryKey: ["notifications-unread", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", user.id)
+        .is("read_at", null);
+      if (error) throw error;
+      return count || 0;
+    },
+    staleTime: 1000 * 15,
+  });
+
+  const markNotificationRead = async (notificationId, link) => {
+    if (!notificationId) return;
+    try {
+      await supabase.rpc("mark_notification_read", { p_id: notificationId });
+    } catch (err) {
+      console.warn("mark notification read error", err?.message || err);
+    } finally {
+      queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["notifications-unread", user?.id] });
+    }
+    if (link) {
+      navigate(link);
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    try {
+      await supabase.rpc("mark_all_notifications_read");
+    } catch (err) {
+      console.warn("mark all notifications read error", err?.message || err);
+    } finally {
+      queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["notifications-unread", user?.id] });
+    }
+  };
+
+  const formatNotificationDate = (value) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleDateString();
   };
 
   return (
@@ -145,6 +213,73 @@ export default function Layout({ children }) {
               </DropdownMenu>
 
               {/* ✅ Mientras carga: mostramos avatar placeholder (no desaparece el menú) */}
+              {user ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={`relative ${isHomePage ? "text-white/80" : "text-slate-500"}`}
+                      aria-label={tr("notifications", "Notificaciones")}
+                    >
+                      <Bell className="h-5 w-5" />
+                      {unreadCount > 0 ? (
+                        <span className="absolute -top-1 -right-1 h-4 min-w-[1rem] px-1 rounded-full bg-rose-500 text-[10px] text-white flex items-center justify-center">
+                          {unreadCount > 9 ? "9+" : unreadCount}
+                        </span>
+                      ) : null}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-80 bg-white shadow-xl">
+                    <div className="flex items-center justify-between px-3 py-2 border-b">
+                      <span className="text-sm font-semibold text-slate-900">
+                        {tr("notifications", "Notificaciones")}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={markAllNotificationsRead}
+                        className="text-xs text-slate-500 hover:text-slate-700"
+                      >
+                        {tr("mark_all_read", "Marcar todo leído")}
+                      </button>
+                    </div>
+                    {notifications.length === 0 ? (
+                      <div className="px-3 py-6 text-sm text-slate-500">
+                        {tr("notifications_empty", "Sin notificaciones")}
+                      </div>
+                    ) : (
+                      <div className="max-h-80 overflow-auto">
+                        {notifications.map((notif) => (
+                          <DropdownMenuItem
+                            key={notif.id}
+                            onSelect={(event) => {
+                              event.preventDefault();
+                              markNotificationRead(notif.id, notif.link);
+                            }}
+                            className="flex flex-col items-start gap-1 py-2"
+                          >
+                            <div className="flex items-center gap-2 w-full">
+                              <span
+                                className={`h-2 w-2 rounded-full ${
+                                  notif.read_at ? "bg-slate-300" : "bg-emerald-500"
+                                }`}
+                              />
+                              <span className="text-sm font-medium text-slate-900">{notif.title}</span>
+                              <span className="ml-auto text-[11px] text-slate-400">
+                                {formatNotificationDate(notif.created_at)}
+                              </span>
+                            </div>
+                            {notif.body ? (
+                              <span className="text-xs text-slate-500 line-clamp-2">{notif.body}</span>
+                            ) : null}
+                          </DropdownMenuItem>
+                        ))}
+                      </div>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+
               {authLoading && !user ? (
                 <Button variant="ghost" size="icon" className="rounded-full" disabled>
                   <div className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-slate-200 animate-pulse" />
@@ -192,6 +327,15 @@ export default function Layout({ children }) {
                         {tr("profile")}
                       </DropdownMenuItem>
                     </Link>
+
+                    {isAdmin ? (
+                      <Link to="/admin" target="_blank" rel="noreferrer">
+                        <DropdownMenuItem>
+                          <Shield className="mr-2 h-4 w-4" />
+                          {tr("admin_panel", "Admin")}
+                        </DropdownMenuItem>
+                      </Link>
+                    ) : null}
 
                     <DropdownMenuSeparator />
 

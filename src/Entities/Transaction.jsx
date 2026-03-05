@@ -17,7 +17,12 @@ const Transaction = {
         "referral_bonus",
         "platform_fee",
         "withdrawal",
-        "surplus_distribution"
+        "surplus_distribution",
+        "seminar_payment",
+        "distribution_marker",
+        "professor_earning",
+        "professor_excess_bonus",
+        "ref_pool_to_professor"
       ],
       "description": "Tipo de transacción"
     },
@@ -35,7 +40,7 @@ const Transaction = {
     },
     "status": {
       "type": "string",
-      "enum": ["pending", "completed", "cancelled"],
+      "enum": ["pending", "completed", "cancelled", "rejected", "held"],
       "default": "completed"
     }
   },

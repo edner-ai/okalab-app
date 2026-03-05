@@ -10,11 +10,12 @@ import { Card, CardContent } from "../../Components/ui/card";
 
 import { Search, SlidersHorizontal, Plus, Loader2 } from "lucide-react";
 import { useLanguage } from "../../Components/shared/LanguageContext";
+import { parseDateValue } from "../../utils/dateValue";
 
 function fmtDate(value) {
   if (!value) return "-";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
+  const d = parseDateValue(value);
+  if (!d || Number.isNaN(d.getTime())) return String(value);
   return d.toLocaleDateString();
 }
 

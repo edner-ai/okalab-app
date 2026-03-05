@@ -17,6 +17,39 @@ import { toast } from "sonner";
 
 const LANGS = ["es", "en", "fr", "ht"];
 
+function isRowComplete(row) {
+  return LANGS.every((lang) => String(row?.[lang] || "").trim().length > 0);
+}
+
+function escapeCsvValue(value) {
+  const raw = value == null ? "" : String(value);
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replace(/"/g, "\"\"")}"`;
+  }
+  return raw;
+}
+
+function buildCsvContent(rows) {
+  const headers = ["key", "es", "en", "fr", "ht"];
+  const lines = (rows || []).map((row) =>
+    headers.map((h) => escapeCsvValue(row?.[h] ?? "")).join(",")
+  );
+  return `\uFEFF${[headers.join(","), ...lines].join("\n")}`;
+}
+
+function downloadCsv(rows, filename) {
+  const csv = buildCsvContent(rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function buildSeedRows() {
   const keys = new Set();
   LANGS.forEach((lang) => {
@@ -221,6 +254,7 @@ export default function AdminTranslations() {
   const [overwriteCsv, setOverwriteCsv] = useState(false);
   const csvInputRef = useRef(null);
   const [csvFileName, setCsvFileName] = useState("");
+  const [translationFilter, setTranslationFilter] = useState("all");
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["i18n"],
@@ -233,13 +267,20 @@ export default function AdminTranslations() {
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter((row) =>
-      [row.key, row.es, row.en, row.fr, row.ht].some((value) =>
-        String(value || "").toLowerCase().includes(term)
-      )
-    );
-  }, [rows, search]);
+    return rows.filter((row) => {
+      const matchesTerm =
+        !term ||
+        [row.key, row.es, row.en, row.fr, row.ht].some((value) =>
+          String(value || "").toLowerCase().includes(term)
+        );
+      if (!matchesTerm) return false;
+      if (translationFilter === "missing") return !isRowComplete(row);
+      if (translationFilter === "complete") return isRowComplete(row);
+      return true;
+    });
+  }, [rows, search, translationFilter]);
+
+  const incompleteRows = useMemo(() => rows.filter((row) => !isRowComplete(row)), [rows]);
 
   const codeSeedRows = useMemo(() => buildSeedRowsFromCode(), []);
   const missingCount = useMemo(() => {
@@ -342,6 +383,14 @@ export default function AdminTranslations() {
       return;
     }
     importCsvMutation.mutate();
+  };
+
+  const handleExport = (rowsToExport, filename) => {
+    if (!rowsToExport?.length) {
+      toast.error(t("i18n_export_empty", "No hay filas para exportar"));
+      return;
+    }
+    downloadCsv(rowsToExport, filename);
   };
 
   const openNew = () => {
@@ -456,11 +505,44 @@ export default function AdminTranslations() {
             </div>
           ) : null}
 
-          <Input
-            placeholder={t("i18n_search_placeholder", "Buscar key o texto...")}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+            <Input
+              className="lg:flex-1"
+              placeholder={t("i18n_search_placeholder", "Buscar key o texto...")}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500">{t("i18n_filter_label", "Mostrar")}</span>
+              <select
+                className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700"
+                value={translationFilter}
+                onChange={(e) => setTranslationFilter(e.target.value)}
+              >
+                <option value="all">{t("i18n_filter_all", "Todas")}</option>
+                <option value="complete">{t("i18n_filter_complete", "Traducidas")}</option>
+                <option value="missing">{t("i18n_filter_missing", "No traducidas")}</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              className="border-slate-200 bg-white shadow-sm hover:bg-slate-50"
+              onClick={() => handleExport(rows, "i18n-all.csv")}
+            >
+              {t("i18n_export_all", "Exportar todo")}
+            </Button>
+            <Button
+              variant="outline"
+              className="border-slate-200 bg-white shadow-sm hover:bg-slate-50"
+              onClick={() => handleExport(incompleteRows, "i18n-missing.csv")}
+              disabled={!incompleteRows.length}
+            >
+              {t("i18n_export_missing", "Exportar no traducidas")}
+            </Button>
+          </div>
 
           {isLoading ? (
             <div className="flex items-center gap-2 text-slate-500 text-sm py-8">

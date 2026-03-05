@@ -3,6 +3,11 @@ import { supabase } from "../lib/supabase";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../Components/shared/LanguageContext";
+import {
+  clearStoredReferralReturnUrl,
+  getStoredReferralReturnUrl,
+} from "../utils/referralState";
+import { useHomeStats } from "../hooks/useHomeStats";
 
 import { Button } from "../Components/ui/button";
 import { Input } from "../Components/ui/input";
@@ -15,7 +20,7 @@ import {
   DropdownMenuTrigger,
 } from "../Components/ui/dropdown-menu";
 
-import { Loader2, Mail, Lock, ArrowRight, Sparkles, Languages } from "lucide-react";
+import { Loader2, Mail, Lock, ArrowRight, Sparkles, Languages, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 function withTimeout(promise, ms, label = "timeout") {
@@ -34,21 +39,29 @@ export default function Login() {
 
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const { data: stats, isLoading: statsLoading, isFetching: statsFetching } = useHomeStats();
 
   const preferredLanguage = language || "es";
   const searchParams = new URLSearchParams(location.search);
   const nextParam = searchParams.get("next");
   const intentParam = searchParams.get("intent");
   const appBasePath = (import.meta.env.VITE_BASE_PATH || "/").replace(/\/$/, "") || "/";
-  const absoluteBase = `${window.location.origin}${appBasePath === "/" ? "" : appBasePath}`;
+  const envPublic = (import.meta.env.VITE_PUBLIC_URL || "").replace(/\/$/, "");
+  const runtimeBase = `${window.location.origin}${appBasePath === "/" ? "" : appBasePath}`;
+  const publicBase =
+    envPublic && envPublic.includes(window.location.origin) && !/localhost|127\.0\.0\.1/i.test(envPublic)
+      ? envPublic
+      : runtimeBase;
 
   const buildRedirectUrl = (path) => {
     const safePath = path && path.startsWith("/") ? path : "/";
-    return `${absoluteBase}${safePath}`;
+    return `${publicBase}${safePath}`;
   };
 
   const getSafeNext = (rawNext) => {
@@ -59,7 +72,7 @@ export default function Login() {
   };
 
   const resolveNext = () => {
-    const safeNext = getSafeNext(nextParam);
+    const safeNext = getSafeNext(nextParam) || getSafeNext(getStoredReferralReturnUrl());
     if (intentParam === "become-professor") {
       if (safeNext && safeNext.startsWith("/profile")) {
         return safeNext.includes("?") ? `${safeNext}&intent=become-professor` : `${safeNext}?intent=become-professor`;
@@ -69,13 +82,49 @@ export default function Login() {
     return safeNext;
   };
 
+  const statsReady = !statsLoading && !statsFetching;
+
+  const formatCount = (value) => {
+    if (typeof value !== "number") return "—";
+    return value.toLocaleString();
+  };
+
+  const getAuthErrorMessage = (err) => {
+    const raw = String(err?.message || "").toLowerCase();
+
+    if (raw.includes("invalid login credentials")) {
+      return t("auth_invalid_login", "Email o contraseña incorrectos.");
+    }
+
+    if (raw.includes("email not confirmed")) {
+      return t("auth_email_not_confirmed", "Debes confirmar tu correo antes de iniciar sesión.");
+    }
+
+    if (raw.includes("signup is disabled")) {
+      return t("auth_signup_disabled", "El registro está deshabilitado en este momento.");
+    }
+
+    if (raw.includes("rate limit")) {
+      return t(
+        "auth_rate_limit",
+        "Demasiados intentos. Espera un momento antes de volver a intentar."
+      );
+    }
+
+    return err?.message || t("auth_error", "Error de autenticación");
+  };
+
   useEffect(() => {
     if (!user) return;
     if ((role || "").toLowerCase() === "admin") {
+      clearStoredReferralReturnUrl();
       navigate("/admin", { replace: true });
       return;
     }
     const nextUrl = resolveNext();
+    if (nextUrl) {
+      clearStoredReferralReturnUrl();
+    }
     navigate(nextUrl || "/profile", { replace: true });
   }, [user, role, navigate, nextParam, intentParam]);
 
@@ -158,7 +207,7 @@ export default function Login() {
           email,
           password,
           options: {
-            data: { full_name: "" },
+            data: { full_name: "", preferred_language: preferredLanguage, locale: preferredLanguage },
             emailRedirectTo: buildRedirectUrl(nextUrl),
           },
         });
@@ -195,7 +244,7 @@ export default function Login() {
         navigate(nextUrl || "/profile");
       }
     } catch (err) {
-      toast.error(err?.message || t("auth_error", "Error de autenticación"));
+      toast.error(getAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -213,8 +262,32 @@ export default function Login() {
       });
       if (error) throw error;
     } catch (err) {
-      toast.error(err?.message || t("auth_error", "Error de autenticación"));
+      toast.error(getAuthErrorMessage(err));
       setOauthLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      toast.error(t("auth_enter_email_first", "Escribe tu email primero."));
+      return;
+    }
+
+    setResettingPassword(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: buildRedirectUrl("/profile"),
+      });
+      if (error) throw error;
+
+      toast.success(
+        t("auth_reset_email_sent", "Te enviamos un enlace para restablecer tu contraseña."),
+      );
+    } catch (err) {
+      toast.error(getAuthErrorMessage(err));
+    } finally {
+      setResettingPassword(false);
     }
   };
 
@@ -263,24 +336,33 @@ export default function Login() {
 
               <div className="mt-6 flex items-center gap-3">
                 <div className="flex items-center gap-2 bg-white/10 border border-white/15 px-3 py-2 rounded-xl text-white/80 text-xs">
-                  {t("login_stat_students", "500+ estudiantes")}
+                  {statsReady ? formatCount(stats?.students) : "—"} {t("students", "estudiantes")}
                 </div>
                 <div className="flex items-center gap-2 bg-white/10 border border-white/15 px-3 py-2 rounded-xl text-white/80 text-xs">
-                  {t("login_stat_seminars", "50+ seminarios")}
+                  {statsReady ? formatCount(stats?.seminars) : "—"} {t("seminars", "seminarios")}
                 </div>
                 <div className="flex items-center gap-2 bg-white/10 border border-white/15 px-3 py-2 rounded-xl text-white/80 text-xs">
-                  {t("login_stat_satisfaction", "95% satisfacción")}
+                  {statsReady && typeof stats?.satisfactionPct === "number" ? `${stats.satisfactionPct}%` : "—"}{" "}
+                  {t("satisfaction", "satisfacción")}
                 </div>
               </div>
             </div>
           </div>
 
           <p className="text-xs text-white/40 relative z-10">
-            {t("login_social_soon", "Próximamente: Google y Facebook.")}
+            {t("login_social_soon", "Próximamente: Facebook.")}
           </p>
         </section>
 
         <section className="relative flex items-center justify-center px-8 py-12 lg:px-12 bg-slate-50">
+          <div className="absolute top-6 left-6 lg:hidden">
+            <Link to="/" className="flex items-center gap-2 text-slate-900">
+              <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center shadow-xl">
+                <span className="text-white font-black text-lg">O</span>
+              </div>
+              <span className="text-lg font-bold">Okalab</span>
+            </Link>
+          </div>
           <div className="absolute top-10 right-12">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -373,6 +455,20 @@ export default function Login() {
                         required
                       />
                     </div>
+                    {!isSignUp ? (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleForgotPassword}
+                          disabled={loading || oauthLoading || resettingPassword}
+                          className="text-sm font-medium text-slate-500 hover:text-slate-700 disabled:opacity-60"
+                        >
+                          {resettingPassword
+                            ? t("common_processing", "Procesando...")
+                            : t("auth_forgot_password", "Olvidé mi contraseña")}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="space-y-2">
@@ -380,12 +476,24 @@ export default function Login() {
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 h-4 w-4" />
                       <Input
-                        type="password"
-                        className="pl-10 h-12 bg-white border-slate-200 text-slate-900 placeholder:text-slate-400"
+                        type={showPassword ? "text" : "password"}
+                        className="pl-10 pr-12 h-12 bg-white border-slate-200 text-slate-900 placeholder:text-slate-400"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         required
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((current) => !current)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        aria-label={
+                          showPassword
+                            ? t("auth_hide_password", "Ocultar contraseña")
+                            : t("auth_show_password", "Mostrar contraseña")
+                        }
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
                     </div>
                   </div>
 

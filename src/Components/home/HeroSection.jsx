@@ -1,66 +1,18 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { ArrowRight, Users, DollarSign } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../../utils';
 import { useLanguage } from '../shared/LanguageContext';
 import { motion } from 'framer-motion';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '../../lib/supabase';
 import { Button } from '../ui/button';
+import { useHomeStats } from '../../hooks/useHomeStats';
 
 export default function HeroSection({ professorCtaHref }) {
   const { t } = useLanguage();
   const ctaHref = professorCtaHref || createPageUrl('CreateSeminar');
   const assetBase = import.meta.env.BASE_URL || "/";
   const heroImageSrc = `${assetBase}assets/hero.webp`;
-  const statsCacheKey = "home_stats_cache";
-  const cachedStats = useMemo(() => {
-    try {
-      const raw = localStorage.getItem(statsCacheKey);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? parsed : null;
-    } catch (err) {
-      console.warn("home stats cache parse error", err?.message || err);
-      return null;
-    }
-  }, []);
-
-  const { data: stats, isLoading: statsLoading, isFetching: statsFetching } = useQuery({
-    queryKey: ['home-stats'],
-    queryFn: async () => {
-      try {
-        const { data, error } = await supabase.rpc('get_home_stats');
-        if (error) throw error;
-
-        const row = Array.isArray(data) ? data[0] : data;
-        const students = Number(row?.students_count);
-        const seminars = Number(row?.seminars_count);
-        const satisfactionPct = Number(row?.satisfaction_pct);
-
-        const normalized = {
-          students: Number.isFinite(students) ? students : null,
-          seminars: Number.isFinite(seminars) ? seminars : null,
-          satisfactionPct: Number.isFinite(satisfactionPct) ? satisfactionPct : null,
-        };
-        try {
-          localStorage.setItem(
-            statsCacheKey,
-            JSON.stringify({ data: normalized, updatedAt: Date.now() })
-          );
-        } catch {
-          // ignore caching errors
-        }
-        return normalized;
-      } catch (err) {
-        console.warn('home stats error', err?.message || err);
-        return { students: null, seminars: null, satisfactionPct: null };
-      }
-    },
-    staleTime: 1000 * 60 * 5,
-    initialData: cachedStats?.data ?? undefined,
-    initialDataUpdatedAt: cachedStats?.updatedAt || 0,
-  });
+  const { data: stats, isLoading: statsLoading, isFetching: statsFetching } = useHomeStats();
 
   const statsReady = !statsLoading && !statsFetching;
   const formatCount = (value) => {

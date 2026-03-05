@@ -3,6 +3,16 @@ import { Link, useParams, useSearchParams, useNavigate, useLocation } from "reac
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
 import { useLanguage } from "../Components/shared/LanguageContext";
+import { getIntlLocale } from "../utils/dateLocale";
+import { buildPublicAppUrl } from "../utils/appUrl";
+import { resolvePaymentWindow } from "../utils/paymentWindow";
+import { parseDateValue } from "../utils/dateValue";
+import {
+  clearReferralStateForSeminar,
+  getStoredReferralCodeForSeminar,
+  storeReferralState,
+} from "../utils/referralState";
+import { useAuth } from "../context/AuthContext.jsx";
 
 import { Button } from "../Components/ui/button";
 import { Card, CardContent } from "../Components/ui/card";
@@ -17,6 +27,7 @@ import {
 } from "../Components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../Components/ui/tabs";
 import StarRating from "../Components/reviews/StarRating";
+import PaymentWindowCountdown from "../Components/seminars/PaymentWindowCountdown";
 
 import {
   Calendar,
@@ -52,17 +63,17 @@ const categoryColors = {
 // Formateo simple (sin date-fns)
 function fmtDate(value, lang = "es") {
   if (!value) return "-";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  const locale = lang === "es" ? "es-ES" : lang === "fr" ? "fr-FR" : "en-US";
+  const d = parseDateValue(value);
+  if (!d || Number.isNaN(d.getTime())) return String(value);
+  const locale = getIntlLocale(lang);
   return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(d);
 }
 
 function fmtDateLong(value, lang = "es") {
   if (!value) return "-";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  const locale = lang === "es" ? "es-ES" : lang === "fr" ? "fr-FR" : "en-US";
+  const d = parseDateValue(value);
+  if (!d || Number.isNaN(d.getTime())) return String(value);
+  const locale = getIntlLocale(lang);
   return new Intl.DateTimeFormat(locale, { year: "numeric", month: "long", day: "numeric" }).format(d);
 }
 
@@ -85,11 +96,7 @@ export default function SeminarDetails() {
   const location = useLocation();
   const seminarId = idFromParams || searchParams.get("id");
   const referralParam = searchParams.get("ref");
-  const referralCode =
-    referralParam ||
-    (localStorage.getItem("referral_seminar") === String(seminarId)
-      ? localStorage.getItem("referral_code")
-      : null);
+  const referralCode = referralParam || getStoredReferralCodeForSeminar(seminarId);
 
   const [showEnrollDialog, setShowEnrollDialog] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
@@ -97,32 +104,17 @@ export default function SeminarDetails() {
   const [copied, setCopied] = useState(false);
   const [referralPrompted, setReferralPrompted] = useState(false);
 
-  const [user, setUser] = useState(null);
-
-  // Perfil/rol para controlar UI (profesor no debe ver "Inscribirse" en su propio seminario)
-  const { data: profile } = useQuery({
-    queryKey: ["profile-role", user?.id],
-    enabled: !!user?.id,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (error) throw error;
-      return data ?? null;
-    },
-  });
+  const { user, profile } = useAuth();
 
   const { t, language } = useLanguage();
   const defaultMetaRef = useRef(null);
 
   const { data: platformSettings } = useQuery({
-    queryKey: ["platform_settings_public_fees"],
+    queryKey: ["platform_settings_public_seminar_details"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("platform_settings")
-        .select("platform_fee_percent, surplus_professor_percent, surplus_referral_percent, updated_at")
+        .select("*")
         .eq("id", 1)
         .maybeSingle();
       if (error) throw error;
@@ -133,18 +125,14 @@ export default function SeminarDetails() {
   });
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data?.user ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      setUser(session?.user ?? null);
+    if (!seminarId || !referralCode) return;
+    storeReferralState({
+      seminarId,
+      referralCode,
+      pathname: location.pathname,
+      search: location.search,
     });
-    return () => sub?.subscription?.unsubscribe?.();
-  }, []);
-
-  useEffect(() => {
-    if (!seminarId || !referralParam) return;
-    localStorage.setItem("referral_code", referralParam);
-    localStorage.setItem("referral_seminar", String(seminarId));
-  }, [seminarId, referralParam]);
+  }, [seminarId, referralCode, location.pathname, location.search]);
 
   // 1) Seminar
   const { data: seminar, isLoading } = useQuery({
@@ -159,6 +147,7 @@ export default function SeminarDetails() {
       return data;
     },
     enabled: !!seminarId,
+    refetchOnMount: "always",
   });
 
   // 2) Enrollments
@@ -204,6 +193,11 @@ export default function SeminarDetails() {
 
   const maxStudents = Number(seminar?.max_students || 0);
   const isFull = Number.isFinite(maxStudents) && maxStudents > 0 && enrollmentCount >= maxStudents;
+  const seminarEndDate = useMemo(() => {
+    if (!seminar?.end_date) return null;
+    return parseDateValue(seminar.end_date, { endOfDay: true });
+  }, [seminar?.end_date]);
+  const isEnded = !!seminarEndDate && new Date() > seminarEndDate;
 
   const { data: ratingRows = [] } = useQuery({
     queryKey: ["seminar-rating-stats", seminarId],
@@ -233,6 +227,41 @@ export default function SeminarDetails() {
     };
   }, [ratingRows]);
 
+  const { data: quote } = useQuery({
+    queryKey: ["quote", seminarId],
+    enabled: !!seminarId,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("quote_price", {
+        p_seminar_id: seminarId,
+      });
+      if (error) throw error;
+      return (data && data[0]) || null;
+    },
+    staleTime: 1000 * 60 * 2,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+  });
+
+  const paymentWindow = useMemo(
+    () =>
+      resolvePaymentWindow({
+        seminarStartDate: seminar?.start_date,
+        quote,
+        settings: platformSettings,
+        forcePayOpen: isFull,
+      }),
+    [seminar?.start_date, quote, platformSettings, isFull]
+  );
+
+  const {
+    paymentOpenDate,
+    paymentCloseDate,
+    isPaymentWindowClosed,
+    isEnrollClosedForPayments,
+    canPayNow,
+    isPaymentOpenByCapacity,
+  } = paymentWindow;
+
   const userEnrollment = useMemo(() => {
     if (!user) return null;
     return enrollments.find((e) => e.student_id === user.id) || null;
@@ -243,15 +272,12 @@ export default function SeminarDetails() {
   const isAdmin = role === "admin";
   const isOwner = !!user && (seminar?.professor_id === user.id || seminar?.instructor_id === user.id);
   const isOwnerProfessor = isOwner && (role === "professor" || role === "teacher" || role === "" || role === "instructor");
+  const professorProfileId = seminar?.professor_id || seminar?.instructor_id || null;
 
   useEffect(() => {
     if (!seminar) return;
 
-    const appBasePath = (import.meta.env.VITE_BASE_PATH || "/").replace(/\/$/, "");
-    const publicBaseUrl =
-      import.meta.env.VITE_PUBLIC_URL ||
-      `${window.location.origin}${appBasePath === "/" ? "" : appBasePath}`;
-    const defaultImage = `${publicBaseUrl}/assets/hero.webp`;
+    const defaultImage = buildPublicAppUrl("/assets/hero.webp");
 
     const rawDescription =
       seminar?.short_description ||
@@ -264,7 +290,7 @@ export default function SeminarDetails() {
 
     const title = `${seminar.title} | Okalab`;
     const ogImage = normalizeImageUrl(seminar?.image_url, defaultImage);
-    const ogUrl = `${publicBaseUrl}/seminars/${seminarId}`;
+    const ogUrl = buildPublicAppUrl(`/seminars/${seminarId}`);
 
     const getMeta = (attr, key) =>
       document.querySelector(`meta[${attr}="${key}"]`)?.getAttribute("content") || "";
@@ -319,10 +345,7 @@ export default function SeminarDetails() {
 
   useEffect(() => {
     if (!userEnrollment) return;
-    if (localStorage.getItem("referral_seminar") === String(seminarId)) {
-      localStorage.removeItem("referral_code");
-      localStorage.removeItem("referral_seminar");
-    }
+    clearReferralStateForSeminar(seminarId);
   }, [userEnrollment, seminarId]);
 
   useEffect(() => {
@@ -334,17 +357,39 @@ export default function SeminarDetails() {
   useEffect(() => {
     if (!referralCode || referralPrompted) return;
     if (enrollmentsLoading) return;
-    if (!user || !seminar || userEnrollment || isOwner || isAdmin || isFull) return;
+    if (
+      !user ||
+      !seminar ||
+      userEnrollment ||
+      isOwner ||
+      isAdmin ||
+      isFull ||
+      isEnded ||
+      isEnrollClosedForPayments
+    ) {
+      return;
+    }
     setShowEnrollDialog(true);
     setReferralPrompted(true);
-  }, [referralCode, referralPrompted, user, seminar, userEnrollment, isOwner, isAdmin, isFull, enrollmentsLoading]);
+  }, [
+    referralCode,
+    referralPrompted,
+    user,
+    seminar,
+    userEnrollment,
+    isOwner,
+    isAdmin,
+    isFull,
+    isEnded,
+    isEnrollClosedForPayments,
+    enrollmentsLoading,
+  ]);
 
   // Pricing (modelo):
   // - El precio por estudiante baja con inscritos hasta alcanzar target_students
   // - Una vez alcanzado el objetivo, el precio se congela en el mínimo (target_income / target_students)
   const targetIncome = Number(seminar?.target_income || 0);
   const targetStudents = Math.max(1, Number(seminar?.target_students || 15));
-  const dueDays = Number(seminar?.payment_due_days || 7);
 
   const platformFeePercent = useMemo(() => {
     const feeFromSettings = Number(platformSettings?.platform_fee_percent);
@@ -353,32 +398,70 @@ export default function SeminarDetails() {
     return Number.isFinite(feeFromSeminar) ? feeFromSeminar : 15;
   }, [platformSettings?.platform_fee_percent, seminar?.platform_fee_percent]);
 
-  const dueDate = useMemo(() => {
-    if (!seminar?.start_date) return null;
-    const d = new Date(seminar.start_date);
-    if (Number.isNaN(d.getTime())) return null;
-    d.setDate(d.getDate() - dueDays);
-    return d;
-  }, [seminar?.start_date, dueDays]);
-
   const minPrice = targetIncome > 0 ? targetIncome / targetStudents : 0;
   const denomNow = Math.min(targetStudents, Math.max(1, enrollmentCount));
-  const estimatedPriceNow = targetIncome > 0 ? targetIncome / denomNow : Number(seminar?.price || 0);
-  const targetReachedForPrice = enrollmentCount >= targetStudents;
-  const nextPrice = targetIncome > 0
-    ? (targetReachedForPrice ? minPrice : targetIncome / Math.min(targetStudents, Math.max(1, enrollmentCount + 1)))
-    : 0;
-  const savings = targetIncome > 0 ? ((1 - (estimatedPriceNow / targetIncome)) * 100).toFixed(0) : "0";
+  const estimatedPriceNow =
+    Number(quote?.estimated_price_now) ||
+    (targetIncome > 0 ? targetIncome / denomNow : Number(seminar?.price || 0));
+
+  const targetReached = enrollmentCount >= targetStudents; // inscritos >= objetivo
+
+  // Precio si entra +1 estudiante (para el aviso “Con +1 estudiante”)
+  const nextPrice =
+    targetIncome > 0
+      ? (targetReached ? minPrice : targetIncome / Math.min(targetStudents, Math.max(1, enrollmentCount + 1)))
+      : 0;
+
+  const priceAfterEnroll =
+    Number.isFinite(nextPrice) && nextPrice > 0 ? nextPrice : estimatedPriceNow;
+
+  const savings = targetIncome > 0 ? ((1 - estimatedPriceNow / targetIncome) * 100).toFixed(0) : "0";
+  const discountText = t("discount_pct", "{pct}% de descuento").replace(/\{\s*pct\s*\}/gi, savings);
+
+  
+const paymentWindowNote = isPaymentWindowClosed
+    ? t("payment_window_closed_note", "La ventana de pago cerró el {close}.")
+    : isPaymentOpenByCapacity
+      ? t(
+          "payment_window_full_note",
+          "Cupos completos: los pagos ya están habilitados y cierran el {close}."
+        )
+      : canPayNow
+        ? t("payment_window_open_note", "Pagos abiertos del {open} al {close}. Inscripciones cerradas.")
+        : t(
+            "payment_window_upcoming_note",
+            "Pagos abrirán el {open} y cierran el {close}. Hasta entonces solo reservas tu cupo."
+          );
+
+  const paymentWindowNoteText = paymentWindowNote
+    .replace("{open}", paymentOpenDate ? fmtDateLong(paymentOpenDate, language) : "—")
+    .replace("{close}", paymentCloseDate ? fmtDateLong(paymentCloseDate, language) : "—");
+
+const minPriceGoalText = useMemo(() => {
+    const raw = t(
+      "min_price_if_goal_slots",
+      "Si llegamos al cupo objetivo ({targetStudents}), el precio mínimo es"
+    );
+    return String(raw).replace(/\{\s*targetStudents\s*\}|\$\{\s*targetStudents\s*\}/g, String(targetStudents));
+  }, [t, targetStudents]);
 
 
-// --- Regla de pago (según prompt/pdf): pagar solo si objetivo alcanzado O ya estamos dentro de la ventana por fecha ---
+// --- Regla de pago: pagar si el seminario llenó cupo o si ya abrió la ventana ---
 const payStatus = (userEnrollment?.payment_status || userEnrollment?.status || "").toLowerCase();
 // ÚNICA FUENTE de pago: payment_status. Estados pagables: unpaid / rejected
 const isPayableStatus = payStatus === "unpaid" || payStatus === "rejected";
-const targetReached = enrollmentCount >= targetStudents; // inscritos >= objetivo
-const canPayByDate = !!dueDate && new Date() >= dueDate; // dentro de X días antes del inicio
-const showPayButton = !!userEnrollment && isPayableStatus && (targetReached || canPayByDate);
+const showPayButton = !!userEnrollment && isPayableStatus && canPayNow;
 const payableAmount = Number(userEnrollment?.final_price ?? estimatedPriceNow ?? 0);
+const showUpcomingPayButton =
+  !!userEnrollment &&
+  isPayableStatus &&
+  !canPayNow &&
+  !isPaymentWindowClosed &&
+  !!paymentOpenDate;
+const showClosedPayState = !!userEnrollment && isPayableStatus && isPaymentWindowClosed;
+
+const showDecisionBlock =
+  !!userEnrollment && isPayableStatus && canPayNow && !targetReached;
 
   // Bloque “modelo económico” como Base44
   const platformFee = targetIncome * (platformFeePercent / 100);
@@ -396,6 +479,22 @@ const payableAmount = Number(userEnrollment?.final_price ?? estimatedPriceNow ??
           t(
             "seminar_full",
             "No quedan cupos disponibles. Explora otros seminarios o espera una nueva fecha."
+          )
+        );
+      }
+      if (isEnded) {
+        throw new Error(
+          t(
+            "seminar_ended",
+            "Este seminario ya finalizó. Explora otros seminarios disponibles."
+          )
+        );
+      }
+      if (isEnrollClosedForPayments) {
+        throw new Error(
+          t(
+            "enrollments_closed_payment_window",
+            "Inscripciones cerradas: la ventana de pagos ya comenzó."
           )
         );
       }
@@ -443,13 +542,26 @@ if (error) {
       queryClient.invalidateQueries({ queryKey: ["seminar-enrollments", seminarId] });
       queryClient.invalidateQueries({ queryKey: ["seminar-enrollment-count", seminarId] });
       setShowEnrollDialog(false);
-      if (referralCode && localStorage.getItem("referral_seminar") === String(seminarId)) {
-        localStorage.removeItem("referral_code");
-        localStorage.removeItem("referral_seminar");
+      if (referralCode) {
+        clearReferralStateForSeminar(seminarId);
       }
-      // No pagamos ahora: el pago ocurre {dueDays} días antes (desde ProcessPayment)
+      // No pagamos aquí: el pago se maneja en la ventana configurada (ProcessPayment / quote_price)
     },
     onError: (err) => {
+      const rawMessage = String(err?.message || "");
+      const isDuplicateEnrollment =
+        err?.code === "23505" ||
+        rawMessage.includes("enrollments_unique_student_seminar") ||
+        rawMessage.toLowerCase().includes("duplicate key value violates unique constraint");
+
+      if (isDuplicateEnrollment) {
+        queryClient.invalidateQueries({ queryKey: ["seminar-enrollments", seminarId] });
+        queryClient.invalidateQueries({ queryKey: ["seminar-enrollment-count", seminarId] });
+        setShowEnrollDialog(false);
+        toast.error(t("already_enrolled", "¡Ya estás inscrito!"));
+        return;
+      }
+
       toast.error(
         err?.message ||
           t("enroll_error", "No se pudo completar la inscripción. Intenta nuevamente.")
@@ -458,27 +570,105 @@ if (error) {
   });
 
 
-const payMutation = useMutation({
-  mutationFn: async () => {
-    if (!userEnrollment?.id) throw new Error("Enrollment missing");
-    const { error } = await supabase.rpc("pay_enrollment", {
-      p_enrollment_id: userEnrollment.id,
-    });
-    if (error) throw error;
-    return true;
-  },
-  onSuccess: () => {
-    queryClient.invalidateQueries({ queryKey: ["seminar-enrollments", seminarId] });
-    setShowPayDialog(false);
-  },
-});
+  const payMutation = useMutation({
+    mutationFn: async () => {
+      if (!userEnrollment?.id) throw new Error("Enrollment missing");
+      if (!canPayNow) {
+        throw new Error(
+          t(
+            "payment_wait_full_or_window",
+            "Aún no puedes pagar: el seminario debe llenarse o entrar en la ventana de pago."
+          )
+        );
+      }
+      const { error } = await supabase.rpc("pay_enrollment", {
+        p_enrollment_id: userEnrollment.id,
+      });
+      if (error) throw error;
+      return true;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["seminar-enrollments", seminarId] });
+      setShowPayDialog(false);
+    },
+  });
+
+  const cancelEnrollmentMutation = useMutation({
+    mutationFn: async () => {
+      if (!userEnrollment?.id) throw new Error("Enrollment missing");
+      const { error } = await supabase.rpc("cancel_enrollment", {
+        p_enrollment_id: userEnrollment.id,
+      });
+      if (error) throw error;
+      return true;
+    },
+    onSuccess: () => {
+      toast.success(t("cancel_enrollment_success", "Inscripción cancelada"));
+      queryClient.invalidateQueries({ queryKey: ["seminar-enrollments", seminarId] });
+      queryClient.invalidateQueries({ queryKey: ["seminar-enrollment-count", seminarId] });
+    },
+    onError: (err) =>
+      toast.error(
+        err?.message || t("cancel_enrollment_error", "No se pudo cancelar la inscripción")
+      ),
+  });
 
   const copyReferralLink = () => {
-    if (!userEnrollment) return;
-    const link = `${window.location.origin}/seminars/${seminarId}?ref=${userEnrollment.id}`;
-    navigator.clipboard.writeText(link);
+    if (!shareUrl) return;
+    navigator.clipboard.writeText(shareUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const shareUrl = useMemo(() => {
+    const base = buildPublicAppUrl(`/seminars/${seminarId}`);
+    if (userEnrollment?.id) return `${base}?ref=${userEnrollment.id}`;
+    return base;
+  }, [seminarId, userEnrollment?.id]);
+
+  const shareMessage = useMemo(() => {
+    const msg = t("share_message", "Mira este seminario en Okalab:");
+    return `${msg}\n${shareUrl}`;
+  }, [shareUrl, t]);
+
+  const waShare = useMemo(
+    () => `https://wa.me/?text=${encodeURIComponent(shareMessage)}`,
+    [shareMessage]
+  );
+  const fbShare = useMemo(
+    () => `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`,
+    [shareUrl]
+  );
+  const lnShare = useMemo(
+    () => `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`,
+    [shareUrl]
+  );
+  const tgShare = useMemo(
+    () =>
+      `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareMessage)}`,
+    [shareUrl, shareMessage]
+  );
+  const xShare = useMemo(
+    () => `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareMessage)}`,
+    [shareMessage]
+  );
+  const emailShare = useMemo(() => {
+    const subject = seminar?.title ? `Okalab: ${seminar.title}` : "Okalab";
+    return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(shareMessage)}`;
+  }, [shareMessage, seminar?.title]);
+
+  const canNativeShare = typeof navigator !== "undefined" && !!navigator.share;
+  const handleNativeShare = async () => {
+    if (!canNativeShare) return;
+    try {
+      await navigator.share({
+        title: seminar?.title || "Okalab",
+        text: t("share_message", "Mira este seminario en Okalab:"),
+        url: shareUrl,
+      });
+    } catch {
+      // usuario canceló o error, no hacemos nada
+    }
   };
 
   const ModalityIcon = seminar ? (modalityIcons[seminar.modality] || Monitor) : Monitor;
@@ -614,19 +804,35 @@ const payMutation = useMutation({
 
                     <div className="mt-8 pt-6 border-t">
                       <h3 className="font-semibold text-slate-900 mb-4">{t("professor", "Profesor")}</h3>
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center">
-                          <span className="text-white font-bold text-lg">
-                            {seminar.professor_name?.[0]?.toUpperCase() || "P"}
-                          </span>
+                      {professorProfileId ? (
+                        <Link to={`/teachers/${professorProfileId}`} className="flex items-center gap-4 hover:opacity-90 transition">
+                          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center">
+                            <span className="text-white font-bold text-lg">
+                              {seminar.professor_name?.[0]?.toUpperCase() || "P"}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-900">
+                              {seminar.professor_name || t("professor", "Profesor")}
+                            </p>
+                            <p className="text-sm text-slate-500">{seminar.professor_email || ""}</p>
+                          </div>
+                        </Link>
+                      ) : (
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center">
+                            <span className="text-white font-bold text-lg">
+                              {seminar.professor_name?.[0]?.toUpperCase() || "P"}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-900">
+                              {seminar.professor_name || t("professor", "Profesor")}
+                            </p>
+                            <p className="text-sm text-slate-500">{seminar.professor_email || ""}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium text-slate-900">
-                            {seminar.professor_name || t("professor", "Profesor")}
-                          </p>
-                          <p className="text-sm text-slate-500">{seminar.professor_email || ""}</p>
-                        </div>
-                      </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -843,33 +1049,34 @@ const payMutation = useMutation({
                   {targetIncome > 0 && (
                     <Badge variant="secondary" className="mt-2 bg-emerald-100 text-emerald-700">
                       <TrendingDown className="h-3 w-3 mr-1" />
-                      {t("discount_pct", `${savings}% de descuento`)}
+                      {discountText}
                     </Badge>
                   )}
                 </div>
 
-                <div className="p-3 bg-amber-50 rounded-xl text-sm text-amber-900">
-                  <b>{t("dont_worry", "No te asustes:")}</b> {t("reserve_only_pay_before", "hoy solo reservas tu cupo. Pagas")} <b>{dueDays} {t("days", "días")}</b> {t("before_start", "antes del inicio")}
-                  {dueDate ? (
-                    <span>
-                      {" "}(<b>{fmtDateLong(dueDate, language)}</b>).
-                    </span>
-                  ) : null}
-                  <div className="text-amber-800 mt-1">
-                    {t("price_drops_with_more", "Tu precio baja automáticamente mientras más estudiantes confirmen.")}
-                  </div>
-                </div>
+	                <div className="p-3 bg-amber-50 rounded-xl text-sm text-amber-900">
+	                  {paymentWindowNoteText}
+	                </div>
 
-                <div className="space-y-3">
+                  {(paymentOpenDate || paymentCloseDate) && !isPaymentWindowClosed ? (
+                    <PaymentWindowCountdown
+                      targetDate={canPayNow ? paymentCloseDate : paymentOpenDate}
+                      mode={canPayNow ? "close" : "open"}
+                      t={t}
+                    />
+                  ) : null}
+              
+                
+	                <div className="space-y-3">
                   <div className="p-3 bg-slate-50 rounded-xl">
                     <div className="flex items-center justify-between text-sm mb-1">
                       <span className="text-slate-600">{t("targetIncome", "Ingreso objetivo")}:</span>
                       <span className="font-semibold">${targetIncome}</span>
                     </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-600">{t("target_for_price", "Objetivo (para bajar precio)")}:</span>
-                      <span className="font-semibold">{targetStudents}</span>
-                    </div>
+	                    <div className="flex items-center justify-between text-sm">
+	                      <span className="text-slate-600">{t("target_goal_slots_label", "Cupos (objetivo)")}:</span>
+	                      <span className="font-semibold">{targetStudents}</span>
+	                    </div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-slate-600">{t("min_price_goal", "Mínimo si llegamos al objetivo")}:</span>
                       <span className="font-semibold">${minPrice.toFixed(2)}</span>
@@ -910,21 +1117,74 @@ const payMutation = useMutation({
                       <p className="font-medium text-emerald-900">{t("already_enrolled", "¡Ya estás inscrito!")}</p>
                     </div>
 
-                    {showPayButton && (
-                      <Button
-                        onClick={() =>
-                          navigate(`/process-payment?enrollment_id=${userEnrollment.id}`)
-                        }
-                        className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 text-base"
-                      >
-                        {t("pay", "Pagar")} ${payableAmount.toFixed(2)}
-                      </Button>
+                    {showDecisionBlock && (
+                      <div className="p-4 bg-amber-50 rounded-xl text-sm text-amber-900 space-y-3">
+                        <p>
+                          {t(
+                            "payment_window_open_only_enrolled",
+                            "Pagos abiertos: puedes pagar o cancelar tu inscripción."
+                          )}
+                        </p>
+                        <div className="grid gap-2">
+                          <Button
+                            onClick={() =>
+                              navigate(`/process-payment?enrollment_id=${userEnrollment.id}`)
+                            }
+                            className="bg-emerald-600 hover:bg-emerald-700"
+                          >
+                            {t("pay", "Pagar")}
+                          </Button>
+                          <Button variant="outline" onClick={() => cancelEnrollmentMutation.mutate()}>
+                            {t("cancel_enrollment", "Cancelar inscripción")}
+                          </Button>
+                        </div>
+                      </div>
                     )}
 
-                    <Button
-                      onClick={() => setShowShareDialog(true)}
-                      className="w-full bg-slate-900 hover:bg-slate-800"
-                    >
+	                    {!showDecisionBlock && showPayButton && (
+	                      <Button
+	                        onClick={() =>
+	                          navigate(`/process-payment?enrollment_id=${userEnrollment.id}`)
+	                        }
+                        className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 text-base"
+                      >
+	                        {t("pay", "Pagar")} ${payableAmount.toFixed(2)}
+	                      </Button>
+	                    )}
+
+                        {!showDecisionBlock && showUpcomingPayButton && (
+                          <Button
+                            disabled
+                            className="w-full h-auto py-3 bg-slate-300 text-slate-700 hover:bg-slate-300 cursor-not-allowed whitespace-normal text-center"
+                          >
+                            {t("payment_available_on", "Pagar disponible el {date}").replace(
+                              "{date}",
+                              paymentOpenDate ? fmtDateLong(paymentOpenDate, language) : "—"
+                            )}
+                          </Button>
+                        )}
+
+                        {!showDecisionBlock && showClosedPayState && (
+                          <div className="space-y-3">
+                            <div className="p-4 bg-amber-50 rounded-xl text-amber-900 text-sm">
+                              {t("payment_window_closed_note", "La ventana de pago cerró el {close}.").replace(
+                                "{close}",
+                                paymentCloseDate ? fmtDateLong(paymentCloseDate, language) : "—"
+                              )}
+                            </div>
+                            <Button
+                              disabled
+                              className="w-full h-12 bg-slate-400 text-white cursor-not-allowed"
+                            >
+                              {t("payment_window_closed_button", "Ventana de pago cerrada")}
+                            </Button>
+                          </div>
+                        )}
+
+	                    <Button
+	                      onClick={() => setShowShareDialog(true)}
+	                      className="w-full bg-slate-900 hover:bg-slate-800"
+	                    >
                       <Share2 className="h-4 w-4 mr-2" />
                       {t("invite", "Invitar")}
                     </Button>
@@ -939,6 +1199,21 @@ const payMutation = useMutation({
                       </p>
                     </div>
                   </div>
+                ) : isEnded ? (
+                  <div className="space-y-3">
+                    <div className="p-4 bg-amber-50 rounded-xl text-amber-900 text-sm">
+                      {t(
+                        "seminar_ended",
+                        "Este seminario ya finalizó. Explora otros seminarios disponibles."
+                      )}
+                    </div>
+                    <Button
+                      disabled
+                      className="w-full h-12 bg-slate-400 text-white cursor-not-allowed"
+                    >
+                      {t("seminar_ended_button", "Seminario finalizado")}
+                    </Button>
+                  </div>
                 ) : isFull ? (
                   <div className="space-y-3">
                     <div className="p-4 bg-amber-50 rounded-xl text-amber-900 text-sm">
@@ -952,6 +1227,21 @@ const payMutation = useMutation({
                       className="w-full h-12 bg-slate-400 text-white cursor-not-allowed"
                     >
                       {t("seminar_full_button", "Cupos llenos")}
+                    </Button>
+                  </div>
+                ) : isEnrollClosedForPayments ? (
+                  <div className="space-y-3">
+                    <div className="p-4 bg-amber-50 rounded-xl text-amber-900 text-sm">
+                      {t(
+                        "enrollments_closed_payment_window",
+                        "Inscripciones cerradas: la ventana de pagos ya comenzó."
+                      )}
+                    </div>
+                    <Button
+                      disabled
+                      className="w-full h-12 bg-slate-400 text-white cursor-not-allowed"
+                    >
+                      {t("enrollments_closed", "Inscripciones cerradas")}
                     </Button>
                   </div>
                 ) : (
@@ -992,18 +1282,21 @@ const payMutation = useMutation({
               </p>
             </div>
 
-            <div className="flex items-center justify-between">
-              <span className="text-slate-600">{t("price_estimated_now", "Precio estimado si pagas ahora")}:</span>
-              <span className="text-2xl font-bold">${estimatedPriceNow.toFixed(2)}</span>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">{t("currentPrice", "Precio actual")}:</span>
+                <span className="text-lg font-semibold">${estimatedPriceNow.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">{t("price_after_enroll", "Precio con tu inscripción")}:</span>
+                <span className="text-2xl font-bold">${priceAfterEnroll.toFixed(2)}</span>
+              </div>
             </div>
 
-            <div className="p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
-              <b>{t("dont_worry", "No te asustes:")}</b> {t("reserve_only_pay_before", "hoy solo reservas tu cupo. Pagas")} {dueDays} {t("days", "días")} {t("before_start", "antes del inicio")}
-              {dueDate ? (
-                <> ({t("due_date", "fecha límite")}: <b>{fmtDateLong(dueDate, language)}</b>)</>
-              ) : null}.
+            <div className="p-3 bg-amber-50 rounded-lg text-sm text-amber-900">
+              {paymentWindowNoteText}
               <div className="mt-1">
-                {t("min_price_if_goal", `Si llegamos al objetivo (${targetStudents}), el precio mínimo es`)} <b>${minPrice.toFixed(2)}</b>.
+                {minPriceGoalText} <b>${minPrice.toFixed(2)}</b>.
               </div>
             </div>
 
@@ -1014,10 +1307,26 @@ const payMutation = useMutation({
             )}
 
             {isFull && (
-              <div className="p-3 bg-red-50 rounded-lg text-sm text-red-800">
+              <div className="p-3 bg-amber-50 rounded-lg text-sm text-amber-900">
                 {t(
                   "seminar_full",
                   "No quedan cupos disponibles. Explora otros seminarios o espera una nueva fecha."
+                )}
+              </div>
+            )}
+            {isEnded && (
+              <div className="p-3 bg-amber-50 rounded-lg text-sm text-amber-900">
+                {t(
+                  "seminar_ended",
+                  "Este seminario ya finalizó. Explora otros seminarios disponibles."
+                )}
+              </div>
+            )}
+            {isEnrollClosedForPayments && (
+              <div className="p-3 bg-amber-50 rounded-lg text-sm text-amber-900">
+                {t(
+                  "enrollments_closed_payment_window",
+                  "Inscripciones cerradas: la ventana de pagos ya comenzó."
                 )}
               </div>
             )}
@@ -1029,7 +1338,7 @@ const payMutation = useMutation({
             </Button>
             <Button
               onClick={() => enrollMutation.mutate()}
-              disabled={enrollMutation.isPending || isFull}
+              disabled={enrollMutation.isPending || isFull || isEnded || isEnrollClosedForPayments}
               className="bg-slate-900 hover:bg-slate-800"
             >
               {enrollMutation.isPending ? t("common_processing", "Procesando...") : t("confirm_enroll", "Confirmar inscripción")}
@@ -1063,9 +1372,12 @@ const payMutation = useMutation({
         <b>{t("important", "Importante:")}</b> {t("payment_pending_admin", "este pago queda")} <b>{t("pending", "pendiente")}</b> {t("payment_pending_admin_suffix", "hasta que un administrador lo apruebe (flujo del modelo económico).")}
       </div>
 
-      {!targetReached && !canPayByDate && (
+      {!canPayNow && (
         <div className="p-3 bg-red-50 rounded-xl text-sm text-red-800">
-          {t("cannot_pay_yet", "Aún no puedes pagar: faltan inscritos para llegar al objetivo o todavía no estás dentro de la ventana de pago.")}
+          {t(
+            "payment_wait_full_or_window",
+            "Aún no puedes pagar: el seminario debe llenarse o entrar en la ventana de pago."
+          )}
         </div>
       )}
     </div>
@@ -1076,7 +1388,7 @@ const payMutation = useMutation({
       </Button>
       <Button
         onClick={() => payMutation.mutate()}
-        disabled={!showPayButton || payMutation.isPending}
+        disabled={!canPayNow || payMutation.isPending}
         className="bg-slate-900 hover:bg-slate-800"
       >
         {payMutation.isPending ? t("common_processing", "Procesando...") : t("confirm_payment", "Confirmar pago")}
@@ -1100,12 +1412,38 @@ const payMutation = useMutation({
             <div className="flex gap-2">
               <Input
                 readOnly
-                value={`${window.location.origin}/seminars/${seminarId}?ref=${userEnrollment?.id || ""}`}
+                value={shareUrl}
                 className="bg-slate-50"
               />
               <Button onClick={copyReferralLink} variant="outline">
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               </Button>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50">
+                <a href={waShare} target="_blank" rel="noopener noreferrer">WhatsApp</a>
+              </Button>
+              <Button asChild variant="outline" className="border-sky-200 text-sky-700 hover:bg-sky-50">
+                <a href={tgShare} target="_blank" rel="noopener noreferrer">Telegram</a>
+              </Button>
+              <Button asChild variant="outline" className="border-blue-200 text-blue-700 hover:bg-blue-50">
+                <a href={fbShare} target="_blank" rel="noopener noreferrer">Facebook</a>
+              </Button>
+              <Button asChild variant="outline" className="border-sky-200 text-sky-700 hover:bg-sky-50">
+                <a href={lnShare} target="_blank" rel="noopener noreferrer">LinkedIn</a>
+              </Button>
+              <Button asChild variant="outline" className="border-slate-200 text-slate-700 hover:bg-slate-50">
+                <a href={xShare} target="_blank" rel="noopener noreferrer">X</a>
+              </Button>
+              <Button asChild variant="outline" className="border-slate-200 text-slate-700 hover:bg-slate-50">
+                <a href={emailShare}>Email</a>
+              </Button>
+              {canNativeShare && (
+                <Button variant="outline" onClick={handleNativeShare}>
+                  {t("share_native", "Compartir")}
+                </Button>
+              )}
             </div>
           </div>
         </DialogContent>

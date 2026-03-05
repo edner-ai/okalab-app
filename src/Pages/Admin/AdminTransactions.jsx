@@ -96,6 +96,7 @@ export default function AdminTransactions() {
                   <TableHead>{t("admin_wallet_id", "Wallet ID")}</TableHead>
                   <TableHead>{t("admin_user_email", "User Email")}</TableHead>
                   <TableHead>{t("admin_type", "Tipo")}</TableHead>
+                  <TableHead>{t("common_status", "Status")}</TableHead>
                   <TableHead>{t("admin_amount", "Monto")}</TableHead>
                   <TableHead>{t("admin_seminar_id", "Seminar ID")}</TableHead>
                   <TableHead>{t("admin_description", "Descripción")}</TableHead>
@@ -112,6 +113,7 @@ export default function AdminTransactions() {
                       {t.user_email || "-"}
                     </TableCell>
                     <TableCell>{t.type || "-"}</TableCell>
+                    <TableCell>{t.status === "held" ? "Retenido" : (t.status || "-")}</TableCell>
                     <TableCell>{money(t.amount)}</TableCell>
                     <TableCell className="truncate max-w-[160px]">
                       {t.seminar_id || "-"}

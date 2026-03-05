@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Search, UserPlus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "../../Components/shared/LanguageContext";
+import { buildPublicAppUrl } from "../../utils/appUrl";
 
 function normalizeRole(profile) {
   return (profile?.role || "student").toLowerCase();
@@ -150,7 +151,7 @@ export default function AdminUsers() {
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: `${window.location.origin}/login` },
+        options: { emailRedirectTo: buildPublicAppUrl("/login") },
       });
       if (error) throw error;
 

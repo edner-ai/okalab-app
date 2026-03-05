@@ -11,6 +11,7 @@ import { Badge } from "../../Components/ui/badge";
 
 import { Search, SlidersHorizontal, Loader2, ArrowUpRight } from "lucide-react";
 import { useLanguage } from "../../Components/shared/LanguageContext";
+import { getPaymentStatusLabel } from "../../utils/paymentStatus";
 
 function money(n) {
   return `$${Number(n || 0).toFixed(2)}`;
@@ -102,6 +103,7 @@ export default function AdminEnrollments() {
               <TableBody>
                 {filtered.map((e) => {
                   const paymentStatus = (e.payment_status || "").toLowerCase();
+                  const paymentLabel = getPaymentStatusLabel(paymentStatus, t);
                   const needsReview =
                     paymentStatus === "pending" ||
                     paymentStatus === "pending_payment";
@@ -117,7 +119,7 @@ export default function AdminEnrollments() {
                       <TableCell>
                         <Badge variant="secondary">{e.status || "-"}</Badge>
                       </TableCell>
-                      <TableCell>{paymentStatus || "-"}</TableCell>
+                      <TableCell>{paymentLabel || "-"}</TableCell>
                       <TableCell>
                         {money(e.final_price ?? e.amount_paid ?? 0)}
                       </TableCell>

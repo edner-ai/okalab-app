@@ -17,13 +17,10 @@ export default function TeacherProfile() {
     enabled: !!id,
     queryFn: async () => {
       try {
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("id, full_name, avatar_url, bio, location, role, is_verified, verification_status")
-          .eq("id", id)
-          .maybeSingle();
+        const { data, error } = await supabase.rpc("get_public_teacher", { p_id: id });
         if (error) throw error;
-        return data ?? null;
+        const row = Array.isArray(data) ? data[0] : data;
+        return row ?? null;
       } catch (err) {
         console.warn("teacher profile error", err?.message || err);
         return null;

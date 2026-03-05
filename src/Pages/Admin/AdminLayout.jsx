@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
@@ -17,9 +17,15 @@ import PlatformSettings from "./PlatformSettings";
 import AdminTranslations from "./AdminTranslations";
 
 export default function AdminLayout() {
-  const { authLoading, profileLoading, user, profile, refresh, isAdmin, roleReady } = useAuth();
+  const { authLoading, profileLoading, user, profile, refresh, isAdmin, roleReady, signOut } = useAuth();
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const [attemptedProfileRefresh, setAttemptedProfileRefresh] = useState(false);
+
+  const handleSignOut = () => {
+    signOut();
+    navigate("/login", { replace: true });
+  };
 
   useEffect(() => {
     let alive = true;
@@ -66,22 +72,37 @@ export default function AdminLayout() {
   if (!isAdmin && roleReady) return <Navigate to="/" replace />;
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
-      <AdminSidebar />
-      <main className="flex-1 p-6">
-        <Routes>
-          <Route index element={<AdminOverview />} />
-          <Route path="users" element={<AdminUsers />} />
-          <Route path="seminars" element={<AdminSeminars />} />
-          <Route path="enrollments" element={<AdminEnrollments />} />
-          <Route path="wallets" element={<AdminWallets />} />
-          <Route path="transactions" element={<AdminTransactions />} />
-          <Route path="withdrawals" element={<AdminWithdrawals />} />
-          <Route path="verifications" element={<AdminVerifications />} />
-          <Route path="settings" element={<PlatformSettings />} />
-          <Route path="translations" element={<AdminTranslations />} />
-        </Routes>
-      </main>
+    <div className="min-h-screen bg-slate-50">
+      <div className="sticky top-0 z-30 w-full bg-white border-b px-4 py-3 flex items-center justify-between">
+        <Link to="/" className="text-sm font-semibold text-slate-900">
+          {t("home", "Inicio")}
+        </Link>
+        <button
+          type="button"
+          onClick={handleSignOut}
+          className="text-sm font-semibold text-rose-600"
+        >
+          {t("logout", "Cerrar sesión")}
+        </button>
+      </div>
+
+      <div className="flex min-h-[calc(100vh-57px)] flex-col md:flex-row">
+        <AdminSidebar />
+        <main className="flex-1 p-6">
+          <Routes>
+            <Route index element={<AdminOverview />} />
+            <Route path="users" element={<AdminUsers />} />
+            <Route path="seminars" element={<AdminSeminars />} />
+            <Route path="enrollments" element={<AdminEnrollments />} />
+            <Route path="wallets" element={<AdminWallets />} />
+            <Route path="transactions" element={<AdminTransactions />} />
+            <Route path="withdrawals" element={<AdminWithdrawals />} />
+            <Route path="verifications" element={<AdminVerifications />} />
+            <Route path="settings" element={<PlatformSettings />} />
+            <Route path="translations" element={<AdminTranslations />} />
+          </Routes>
+        </main>
+      </div>
     </div>
   );
 }

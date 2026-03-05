@@ -9,6 +9,7 @@ import { Input } from "../Components/ui/input";
 import { Textarea } from "../Components/ui/textarea";
 import { Label } from "../Components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "../Components/ui/card";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../Components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -31,6 +32,7 @@ import {
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import ReviewPrompt from "../Components/reviews/ReviewPrompt";
+import Cropper from "react-easy-crop";
 
 const LANG_OPTIONS = [
   { value: "es", label: "🇪🇸 Español" },
@@ -43,13 +45,56 @@ const AVATAR_BUCKET = "avatars";
 const MAX_AVATAR_MB = 2;
 const maxBytes = (mb) => mb * 1024 * 1024;
 
+const createImage = (url) =>
+  new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener("load", () => resolve(image));
+    image.addEventListener("error", (error) => reject(error));
+    image.setAttribute("crossOrigin", "anonymous");
+    image.src = url;
+  });
+
+const getCroppedImageBlob = async (imageSrc, pixelCrop, mimeType = "image/jpeg") => {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement("canvas");
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+  const ctx = canvas.getContext("2d");
+
+  ctx.drawImage(
+    image,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    pixelCrop.width,
+    pixelCrop.height
+  );
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("No se pudo recortar la imagen"));
+          return;
+        }
+        resolve(blob);
+      },
+      mimeType,
+      0.92
+    );
+  });
+};
+
 export default function Profile() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t, changeLanguage } = useLanguage();
 
   // ✅ Fuente única de verdad (AuthProvider)
-  const { user, profile, loading, refresh, role, roleReady, isAdmin } = useAuth();
+  const { user, profile, loading, refresh, role, roleReady, isAdmin, signOut } = useAuth();
   const profileRow = profile;
 
   const [saving, setSaving] = useState(false);
@@ -57,6 +102,13 @@ export default function Profile() {
   const [avatarPreview, setAvatarPreview] = useState(null);
 
   const [showBecomeProfessor, setShowBecomeProfessor] = useState(false);
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState(null);
+  const [cropMimeType, setCropMimeType] = useState("image/jpeg");
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
+  const [cropLoading, setCropLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     full_name: "",
@@ -133,6 +185,17 @@ export default function Profile() {
       ? `${formData.avatar_url}${avatarVersion ? `?v=${avatarVersion}` : ""}`
       : null);
 
+  const resetCropState = () => {
+    if (cropImageSrc) {
+      URL.revokeObjectURL(cropImageSrc);
+    }
+    setCropImageSrc(null);
+    setCrop({ x: 0, y: 0 });
+    setZoom(1);
+    setCroppedAreaPixels(null);
+    setCropMimeType("image/jpeg");
+  };
+
   // ---- guardar cambios ----
   const handleSave = async () => {
     if (!user) return;
@@ -199,8 +262,36 @@ export default function Profile() {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate("/");
+    await signOut();
+    navigate("/login", { replace: true });
+  };
+
+  const uploadAvatar = async (blob, mimeType) => {
+    if (!user) return;
+    const safeType = mimeType?.startsWith("image/") ? mimeType : "image/jpeg";
+    const ext = safeType === "image/png" ? "png" : safeType === "image/webp" ? "webp" : "jpg";
+    const path = `${user.id}/avatar.${ext}`;
+
+    const { error } = await supabase.storage.from(AVATAR_BUCKET).upload(path, blob, {
+      upsert: true,
+      cacheControl: "3600",
+      contentType: safeType,
+    });
+    if (error) throw error;
+
+    const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+    const publicUrl = data?.publicUrl;
+    if (!publicUrl) throw new Error(t("avatar_url_error", "No se pudo obtener URL pública."));
+
+    const { error: updErr } = await supabase
+      .from("profiles")
+      .update({ avatar_url: publicUrl, updated_at: new Date().toISOString() })
+      .eq("id", user.id);
+    if (updErr) throw updErr;
+
+    setFormData((p) => ({ ...p, avatar_url: publicUrl }));
+    setAvatarPreview(publicUrl);
+    await refresh();
   };
 
   const handleAvatarChange = async (e) => {
@@ -214,39 +305,36 @@ export default function Profile() {
       toast.error(t("avatar_max_size", `El avatar debe ser máximo ${MAX_AVATAR_MB}MB`));
       return;
     }
+    const previewUrl = URL.createObjectURL(file);
+    setCropImageSrc(previewUrl);
+    setCropMimeType(file.type || "image/jpeg");
+    setCropModalOpen(true);
+    e.target.value = "";
+  };
 
+  const onCropComplete = (_croppedArea, croppedPixels) => {
+    setCroppedAreaPixels(croppedPixels);
+  };
+
+  const handleCropCancel = () => {
+    setCropModalOpen(false);
+    resetCropState();
+  };
+
+  const handleCropSave = async () => {
+    if (!cropImageSrc || !croppedAreaPixels) return;
+    setCropLoading(true);
     setUploading(true);
     try {
-      const previewUrl = URL.createObjectURL(file);
-      setAvatarPreview(previewUrl);
-
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      const path = `${user.id}/avatar.${ext}`;
-
-      const { error } = await supabase.storage.from(AVATAR_BUCKET).upload(path, file, {
-        upsert: true,
-        cacheControl: "3600",
-        contentType: file.type || "image/jpeg",
-      });
-      if (error) throw error;
-
-      const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path);
-      const publicUrl = data?.publicUrl;
-      if (!publicUrl) throw new Error(t("avatar_url_error", "No se pudo obtener URL pública."));
-
-      const { error: updErr } = await supabase
-        .from("profiles")
-        .update({ avatar_url: publicUrl, updated_at: new Date().toISOString() })
-        .eq("id", user.id);
-      if (updErr) throw updErr;
-
-      setFormData((p) => ({ ...p, avatar_url: publicUrl }));
-      setAvatarPreview(publicUrl);
-      await refresh();
+      const blob = await getCroppedImageBlob(cropImageSrc, croppedAreaPixels, cropMimeType);
+      await uploadAvatar(blob, cropMimeType);
       toast.success(t("avatar_updated", "Avatar actualizado"));
+      setCropModalOpen(false);
+      resetCropState();
     } catch (err) {
       toast.error(err?.message || t("avatar_upload_error", "No se pudo subir el avatar"));
     } finally {
+      setCropLoading(false);
       setUploading(false);
     }
   };
@@ -266,6 +354,52 @@ export default function Profile() {
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-3xl mx-auto px-6">
         <ReviewPrompt />
+        <Dialog
+          open={cropModalOpen}
+          onOpenChange={(open) => {
+            if (!open) handleCropCancel();
+          }}
+        >
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>{t("avatar_crop_title", "Recortar foto")}</DialogTitle>
+            </DialogHeader>
+            <div className="relative w-full h-72 bg-slate-900/80 rounded-xl overflow-hidden">
+              {cropImageSrc ? (
+                <Cropper
+                  image={cropImageSrc}
+                  crop={crop}
+                  zoom={zoom}
+                  aspect={1}
+                  onCropChange={setCrop}
+                  onZoomChange={setZoom}
+                  onCropComplete={onCropComplete}
+                />
+              ) : null}
+            </div>
+            <div className="flex items-center gap-3">
+              <Label className="text-sm text-slate-600">{t("avatar_crop_zoom", "Zoom")}</Label>
+              <input
+                type="range"
+                min={1}
+                max={3}
+                step={0.1}
+                value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+                className="w-full"
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={handleCropCancel} disabled={cropLoading}>
+                {t("avatar_crop_cancel", "Cancelar")}
+              </Button>
+              <Button onClick={handleCropSave} disabled={cropLoading}>
+                {cropLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                {t("avatar_crop_save", "Guardar")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         {/* Header */}
         <div className="flex items-center gap-4 mb-8">
           <Link to="/">

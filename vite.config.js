@@ -14,6 +14,8 @@ const normalizeBase = (value) => {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "VITE_");
   const base = normalizeBase(env.VITE_BASE_PATH || "/");
+  const assetVersion = (env.VITE_PWA_ASSET_VERSION || "").trim();
+  const iconQuery = assetVersion ? `?v=${assetVersion}` : "";
 
   return {
     base,
@@ -38,17 +40,17 @@ export default defineConfig(({ mode }) => {
           scope: base,
           icons: [
             {
-              src: "pwa-192.png",
+              src: `pwa-192.png${iconQuery}`,
               sizes: "192x192",
               type: "image/png",
             },
             {
-              src: "pwa-512.png",
+              src: `pwa-512.png${iconQuery}`,
               sizes: "512x512",
               type: "image/png",
             },
             {
-              src: "pwa-512.png",
+              src: `pwa-512.png${iconQuery}`,
               sizes: "512x512",
               type: "image/png",
               purpose: "any maskable",

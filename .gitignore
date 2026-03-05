@@ -16,7 +16,6 @@ dist-ssr
 .env
 .env.production
 .env.staging
-BACKUP.zip
 dev-dist
 
 # Editor directories and files

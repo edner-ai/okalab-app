@@ -9,8 +9,11 @@ import Home from "./Pages/Home.jsx";
 import Seminars from "./Pages/Seminars.jsx";
 import SeminarDetails from "./Pages/SeminarDetails.jsx";
 import Login from "./Pages/Login.jsx";
+import AuthConfirm from "./Pages/AuthConfirm.jsx";
 import Privacy from "./Pages/Privacy.jsx";
+import ResetPassword from "./Pages/ResetPassword.jsx";
 import Terms from "./Pages/Terms.jsx";
+import Support from "./Pages/Support.jsx";
 import Profile from "./Pages/Profile.jsx";
 import CreateSeminar from "./Pages/CreateSeminar.jsx";
 import MySeminars from "./Pages/MySeminars.jsx";
@@ -62,6 +65,8 @@ function App() {
 
             <Routes>
               <Route path="/login" element={<Login />} />
+              <Route path="/auth/confirm" element={<AuthConfirm />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
 
               {/* APP PÚBLICA con Layout */}
               <Route path="/" element={<Layout />}>
@@ -73,6 +78,7 @@ function App() {
                 <Route path="teachers/:id" element={<TeacherProfile />} />
                 <Route path="privacy" element={<Privacy />} />
                 <Route path="terms" element={<Terms />} />
+                <Route path="support" element={<Support />} />
                 <Route
                   path="profile"
                   element={

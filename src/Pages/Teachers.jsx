@@ -17,11 +17,7 @@ export default function Teachers() {
     queryKey: ["teachers-directory"],
     queryFn: async () => {
       try {
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("id, full_name, avatar_url, bio, location, role, is_verified, verification_status, updated_at")
-          .or("role.eq.teacher,role.eq.professor,is_verified.eq.true,verification_status.eq.approved")
-          .order("updated_at", { ascending: false });
+        const { data, error } = await supabase.rpc("get_public_teachers");
         if (error) throw error;
         return data ?? [];
       } catch (err) {

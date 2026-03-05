@@ -5,7 +5,7 @@
 // - spinner al cargar seminario
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
@@ -23,7 +23,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "../Components/ui/popove
 import { ArrowLeft, Calendar as CalendarIcon, Upload, Plus, X, Loader2, Check, DollarSign, Clock, Users, MapPin, Video } from "lucide-react";
 import { motion } from "framer-motion";
 import { format, isBefore, isEqual } from "date-fns";
-import { es } from "date-fns/locale";
+import { getDateFnsLocale } from "../utils/dateLocale";
+import { resolvePaymentWindow } from "../utils/paymentWindow";
+import { parseDateValue } from "../utils/dateValue";
 import { toast } from "sonner";
 
 const categoryOptions = [
@@ -61,17 +63,19 @@ const ALLOWED_MATERIAL_MIME = new Set([
 export default function CreateSeminar() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { t } = useLanguage();
+  const queryClient = useQueryClient();
+  const { t, language } = useLanguage();
+  const dateLocale = useMemo(() => getDateFnsLocale(language), [language]);
   const editId = useMemo(() => new URLSearchParams(location.search).get("edit"), [location.search]);
   const isEditing = !!editId;
 
   const { user, profile, loading, canCreateSeminar, role } = useAuth();
   const { data: platformSettings } = useQuery({
-    queryKey: ["platform_settings_public_fees"],
+    queryKey: ["platform_settings_create_seminar"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("platform_settings")
-        .select("platform_fee_percent, surplus_professor_percent, updated_at")
+        .select("*")
         .eq("id", 1)
         .maybeSingle();
       if (error) throw error;
@@ -85,6 +89,7 @@ export default function CreateSeminar() {
   const [loadingSeminar, setLoadingSeminar] = useState(false);
   const settingsAppliedRef = useRef(false);
   const languageTouchedRef = useRef(false);
+  const loadedSeminarIdRef = useRef(null);
 
   const [formData, setFormData] = useState({
     title: "",
@@ -97,8 +102,7 @@ export default function CreateSeminar() {
     target_income: "",
     target_students: 15,
     excess_students: 0,
-    payment_due_days: 7,
-    max_students: "",
+max_students: "",
     image_url: "",
     materials: [],
     language: localStorage.getItem("preferred_language") || "es",
@@ -122,6 +126,7 @@ export default function CreateSeminar() {
     const load = async () => {
       if (!isEditing) return;
       if (!user) return;
+      if (loadedSeminarIdRef.current === editId) return;
 
       setLoadingSeminar(true);
       try {
@@ -137,10 +142,11 @@ export default function CreateSeminar() {
         setFormData((prev) => ({
           ...prev,
           ...data,
-          start_date: data.start_date ? new Date(data.start_date) : null,
-          end_date: data.end_date ? new Date(data.end_date) : null,
+          start_date: parseDateValue(data.start_date),
+          end_date: parseDateValue(data.end_date),
           materials: Array.isArray(data.materials) ? data.materials : (prev.materials || []),
         }));
+        loadedSeminarIdRef.current = editId;
       } catch (err) {
         toast.error(err?.message || t("seminar_edit_load_error", "Error al cargar el seminario para editar"));
       } finally {
@@ -224,6 +230,15 @@ export default function CreateSeminar() {
       !!formData.target_students
     );
   }, [formData]);
+
+  const paymentWindowPreview = useMemo(
+    () =>
+      resolvePaymentWindow({
+        seminarStartDate: formData.start_date,
+        settings: platformSettings,
+      }),
+    [formData.start_date, platformSettings]
+  );
 
   const uploadToStorage = async ({ file, folder, bucket, maxMb, validateMime }) => {
     const ext = (file.name.split(".").pop() || "").toLowerCase();
@@ -353,8 +368,7 @@ export default function CreateSeminar() {
         target_income: parseFloat(formData.target_income),
         target_students: parseInt(formData.target_students, 10),
         excess_students: parseInt(formData.excess_students, 10),
-        payment_due_days: parseInt(formData.payment_due_days, 10),
-        max_students: Number.isFinite(parseInt(formData.max_students, 10))
+max_students: Number.isFinite(parseInt(formData.max_students, 10))
           ? parseInt(formData.max_students, 10)
           : parseInt(formData.target_students, 10) + parseInt(formData.excess_students, 10),
         start_date: formData.start_date ? format(formData.start_date, "yyyy-MM-dd") : null,
@@ -377,7 +391,20 @@ export default function CreateSeminar() {
       if (error) throw error;
       return data;
     },
-    onSuccess: (seminar) => {
+    onSuccess: async (seminar) => {
+      queryClient.setQueryData(["seminar", seminar.id], seminar);
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["seminar", seminar.id] }),
+        queryClient.invalidateQueries({ queryKey: ["quote", seminar.id] }),
+        queryClient.invalidateQueries({ queryKey: ["seminar-enrollments", seminar.id] }),
+        queryClient.invalidateQueries({ queryKey: ["seminar-enrollment-count", seminar.id] }),
+        queryClient.invalidateQueries({ queryKey: ["seminars"] }),
+        queryClient.invalidateQueries({ queryKey: ["home-featured-seminars"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-seminars"] }),
+        queryClient.invalidateQueries({ queryKey: ["my-seminars"] }),
+      ]);
+
       toast.success(isEditing ? t("seminar_updated", "Seminario actualizado correctamente") : t("seminar_created", "Seminario creado correctamente"));
       navigate(`/seminars/${seminar.id}`);
     },
@@ -610,13 +637,13 @@ export default function CreateSeminar() {
                 <CardContent className="space-y-5">
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                    <Label>{t("startDate", "Fecha de inicio")} *</Label>
+                      <Label>{t("startDate", "Fecha de inicio")} *</Label>
                       <Popover>
                         <PopoverTrigger asChild>
                           <Button variant="outline" className="w-full h-12 justify-start">
                             <CalendarIcon className="mr-2 h-4 w-4" />
                             {formData.start_date
-                              ? format(formData.start_date, "PPP", { locale: es })
+                              ? format(formData.start_date, "PPP", { locale: dateLocale })
                               : t("select_date", "Seleccionar fecha")}
                           </Button>
                         </PopoverTrigger>
@@ -625,20 +652,20 @@ export default function CreateSeminar() {
                             mode="single"
                             selected={formData.start_date}
                             onSelect={(date) => handleChange("start_date", date)}
-                            locale={es}
+                            locale={dateLocale}
                           />
                         </PopoverContent>
                       </Popover>
                     </div>
 
                     <div className="space-y-2">
-                    <Label>{t("endDate", "Fecha de fin")} *</Label>
+                      <Label>{t("endDate", "Fecha de fin")} *</Label>
                       <Popover>
                         <PopoverTrigger asChild>
                           <Button variant="outline" className="w-full h-12 justify-start">
                             <CalendarIcon className="mr-2 h-4 w-4" />
                             {formData.end_date
-                              ? format(formData.end_date, "PPP", { locale: es })
+                              ? format(formData.end_date, "PPP", { locale: dateLocale })
                               : t("select_date", "Seleccionar fecha")}
                           </Button>
                         </PopoverTrigger>
@@ -647,7 +674,7 @@ export default function CreateSeminar() {
                             mode="single"
                             selected={formData.end_date}
                             onSelect={(date) => handleChange("end_date", date)}
-                            locale={es}
+                            locale={dateLocale}
                             disabled={(date) =>
                               formData.start_date instanceof Date
                                 ? isBefore(date, formData.start_date) || isEqual(date, formData.start_date)
@@ -656,48 +683,28 @@ export default function CreateSeminar() {
                           />
                         </PopoverContent>
                       </Popover>
-                    </div>
 
                   </div>
+                  </div>
 
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
+                  <div className="space-y-2">
                     <Label>{t("total_hours", "Total de horas")} *</Label>
-                      <div className="relative">
-                        <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                        <Input
-                          type="number"
-                          value={formData.total_hours}
-                          onChange={(e) => handleChange("total_hours", e.target.value)}
-                          placeholder="10"
-                          className="h-12 pl-10"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                    <Label>{t("payment_due_days", "Pago (días antes del inicio)")} *</Label>
-                      <div className="relative">
-                        <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                        <Input
-                          type="number"
-                          value={formData.payment_due_days}
-                          onChange={(e) => handleChange("payment_due_days", e.target.value)}
-                          placeholder="7"
-                          className="h-12 pl-10"
-                        />
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        {t("payment_due_note", "Los estudiantes pagan")}{" "}
-                        <b>{formData.payment_due_days || 7} {t("days", "días")}</b> {t("payment_due_note_suffix", "antes del inicio (configurable por admin).")}
-                      </p>
+                    <div className="relative">
+                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                      <Input
+                        type="number"
+                        value={formData.total_hours}
+                        onChange={(e) => handleChange("total_hours", e.target.value)}
+                        placeholder="10"
+                        className="h-12 pl-10"
+                      />
                     </div>
                   </div>
 
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label className="block min-h-[40px] leading-tight">
-                        {t("target_students_label", "Objetivo de estudiantes (para bajar el precio)")} *
+                        {t("target_goal_slots_label", "Cupos (objetivo)")} *
                       </Label>
                       <div className="relative">
                         <Users className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -710,7 +717,10 @@ export default function CreateSeminar() {
                         />
                       </div>
                       <p className="text-xs text-slate-500">
-                        {t("target_students_help", "Este número se usa para determinar el precio por estudiante.")}
+                        {t(
+                          "target_goal_slots_help",
+                          "Este número define el cupo objetivo a partir del cual el precio llega a su mínimo."
+                        )}
                       </p>
                     </div>
 
@@ -731,6 +741,45 @@ export default function CreateSeminar() {
                       <p className="text-xs text-slate-500">
                         {t("total_capacity", "Capacidad total")}: <b>{formData.max_students || "-"}</b> {t("capacity_formula", "(objetivo + excedente)")}
                       </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-950">
+                    <p className="font-medium">
+                      {t("payment_window_preview_title", "Ventana de pago configurada por administración")}
+                    </p>
+                    <p className="mt-1 text-sky-900">
+                      {formData.start_date
+                        ? t(
+                            "payment_window_preview_help",
+                            "Estas fechas se calculan automáticamente con la fecha de inicio y los días definidos en BackOffice."
+                          )
+                        : t(
+                            "payment_window_preview_missing_start",
+                            "Selecciona la fecha de inicio para ver cuándo abrirán y cerrarán los pagos."
+                          )}
+                    </p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-lg bg-white/70 px-3 py-2">
+                        <span className="text-xs uppercase tracking-[0.16em] text-sky-700">
+                          {t("payment_open_date_label", "Fecha inicio pago")}
+                        </span>
+                        <p className="mt-1 font-semibold">
+                          {paymentWindowPreview.paymentOpenDate
+                            ? format(paymentWindowPreview.paymentOpenDate, "PPP", { locale: dateLocale })
+                            : "—"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-white/70 px-3 py-2">
+                        <span className="text-xs uppercase tracking-[0.16em] text-sky-700">
+                          {t("payment_close_date_label", "Fecha cierre pago")}
+                        </span>
+                        <p className="mt-1 font-semibold">
+                          {paymentWindowPreview.paymentCloseDate
+                            ? format(paymentWindowPreview.paymentCloseDate, "PPP", { locale: dateLocale })
+                            : "—"}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -1002,7 +1051,9 @@ export default function CreateSeminar() {
                   </div>
 
                   <p className="text-xs text-white/50">
-                    {t("students_pay_less", "Los estudiantes pagan menos cuantos más confirmen.")} {t("target", "Objetivo")}: {formData.target_students || "-"}· {t("total_capacity", "Capacidad total")}: {formData.max_students || "-"}
+                    {t("students_pay_less", "Los estudiantes pagan menos cuantos más confirmen.")}{" "}
+                    {t("goal_slots_short", "Cupos objetivo")}: {formData.target_students || "-"} ·{" "}
+                    {t("total_capacity", "Capacidad total")}: {formData.max_students || "-"}
                   </p>
                 </CardContent>
               </Card>
@@ -1034,7 +1085,7 @@ export default function CreateSeminar() {
 
               {!isValid ? (
                 <p className="text-xs text-slate-500">
-                  {t("publish_requirements", "Completa todos los campos obligatorios (*) para publicar (incluye fecha fin, objetivo y días de pago).")}
+                  {t("publish_requirements", "Completa todos los campos obligatorios (*) para publicar (incluye fecha fin y objetivo).")}
                 </p>
               ) : null}
             </div>

@@ -52,7 +52,13 @@ export default function AdminSidebar() {
       </Section>
 
       <Section title={t("admin_section_settings", "Settings")}>
-        <Item to="/admin/settings">{t("admin_platform_settings", "Platform Settings")}</Item>
+        <div className="space-y-1 pl-2 border-l border-slate-100">
+          <Item to="/admin/settings#app">{t("admin_settings_app", "App")}</Item>
+          <Item to="/admin/settings#fees">{t("admin_settings_fees", "Comisiones y reparto")}</Item>
+          <Item to="/admin/settings#payments">{t("admin_settings_payments", "Métodos de pago")}</Item>
+          <Item to="/admin/settings#support">{t("admin_settings_support", "Canales de soporte")}</Item>
+          <Item to="/admin/settings#seminars">{t("admin_settings_seminars", "Seminarios")}</Item>
+        </div>
         <Item to="/admin/translations">{t("admin_translations", "Translations")}</Item>
       </Section>
     </aside>

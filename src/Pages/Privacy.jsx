@@ -19,41 +19,103 @@ export default function Privacy() {
 
         <Card className="border-0 shadow-sm">
           <CardHeader>
-            <CardTitle className="text-lg">Resumen para usuarios</CardTitle>
+            <CardTitle className="text-lg">Política de privacidad de Okalab</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-5 text-sm text-slate-600 leading-6">
+          <CardContent className="space-y-6 text-sm text-slate-600 leading-6">
             <div>
-              <p className="font-semibold text-slate-900">Qué datos recopilamos</p>
+              <p className="font-semibold text-slate-900">1. Responsable del tratamiento</p>
               <p>
-                Email, nombre, preferencias de idioma y datos operativos necesarios para el uso de la
-                plataforma, como inscripciones y transacciones.
+                ZEPHIRMATIQUE SRL (RNC 1-31-45774-6), República Dominicana, es responsable del tratamiento
+                de los datos personales recopilados en Okalab.
               </p>
             </div>
             <div>
-              <p className="font-semibold text-slate-900">Cómo los usamos</p>
+              <p className="font-semibold text-slate-900">2. Datos que recopilamos</p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>Datos de cuenta: email, nombre y credenciales de acceso.</li>
+                <li>Perfil: foto, biografía, idioma preferido, verificación.</li>
+                <li>Actividad: inscripciones, pagos, reseñas, invitaciones.</li>
+                <li>Datos técnicos: IP, navegador, dispositivo, logs básicos de seguridad.</li>
+                <li>Cookies y tecnologías similares para funcionamiento del sitio.</li>
+              </ul>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-900">3. Cómo usamos los datos</p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>Crear y gestionar cuentas, inscripciones y pagos.</li>
+                <li>Enviar notificaciones relacionadas con el servicio.</li>
+                <li>Mejorar la experiencia y la seguridad de la plataforma.</li>
+                <li>Cumplir obligaciones legales y resolver disputas.</li>
+              </ul>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-900">4. Base legal</p>
               <p>
-                Para autenticarte, habilitar funciones de la plataforma, procesar pagos y mejorar la
-                experiencia de aprendizaje.
+                Tratamos los datos para ejecutar el contrato contigo, por consentimiento (cuando aplica)
+                y por interés legítimo en operar y asegurar el servicio.
               </p>
             </div>
             <div>
-              <p className="font-semibold text-slate-900">Con quién se comparten</p>
+              <p className="font-semibold text-slate-900">5. Con quién compartimos datos</p>
               <p>
-                Solo con proveedores necesarios para operar el servicio (por ejemplo, pagos o almacenamiento).
-                No vendemos datos personales.
+                Solo con proveedores necesarios para operar el servicio (alojamiento, emails, pagos y
+                almacenamiento). No vendemos datos personales.
               </p>
             </div>
             <div>
-              <p className="font-semibold text-slate-900">Tus derechos</p>
+              <p className="font-semibold text-slate-900">6. Transferencias internacionales</p>
               <p>
-                Puedes solicitar acceso, corrección o eliminación de datos. Escríbenos si necesitas ayuda.
+                Algunos proveedores pueden procesar datos fuera de República Dominicana. Tomamos medidas
+                para proteger la información.
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-900">7. Conservación de datos</p>
+              <p>
+                Conservamos los datos el tiempo necesario para prestar el servicio y cumplir obligaciones
+                legales. Luego los eliminamos o anonimizamos.
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-900">8. Tus derechos</p>
+              <p>
+                Puedes solicitar acceso, corrección, eliminación u oposición al tratamiento de tus datos.
+                Escríbenos si necesitas ayuda.
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-900">9. Seguridad</p>
+              <p>
+                Aplicamos medidas técnicas y organizativas razonables para proteger la información
+                personal.
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-900">10. Cookies</p>
+              <p>
+                Usamos cookies esenciales para el funcionamiento y cookies de rendimiento para mejorar la
+                experiencia. Puedes gestionarlas desde tu navegador.
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-900">11. Cambios en esta política</p>
+              <p>
+                Podemos actualizar esta política. Notificaremos cambios relevantes dentro de la
+                plataforma.
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-900">12. Contacto</p>
+              <p>
+                Para consultas sobre privacidad, escribe a{" "}
+                <span className="font-semibold text-slate-900">legal@oukaap.com</span>.
               </p>
             </div>
           </CardContent>
         </Card>
 
         <div className="mt-6 text-sm text-slate-500">
-          Última actualización: Feb 8, 2026.{" "}
+          Última actualización: 22 de febrero de 2026.{" "}
           <Link to="/terms" className="text-slate-900 underline">
             Ver términos de servicio
           </Link>

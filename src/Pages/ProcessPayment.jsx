@@ -1,14 +1,15 @@
 // ProcessPayment.jsx (UNIFIED)
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../Components/shared/LanguageContext";
+import { getIntlLocale } from "../utils/dateLocale";
+import { resolvePaymentWindow } from "../utils/paymentWindow";
 
 import { Button } from "../Components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../Components/ui/card";
-import { Input } from "../Components/ui/input";
 import { Label } from "../Components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../Components/ui/select";
 import {
@@ -22,13 +23,14 @@ import { Textarea } from "../Components/ui/textarea";
 
 import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { getPaymentStatusLabel } from "../utils/paymentStatus";
 import { ArrowLeft, CreditCard, Loader2, Check, AlertCircle, X } from "lucide-react";
 
 export default function ProcessPayment() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user, loading, role } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const urlParams = new URLSearchParams(window.location.search);
   const enrollmentId = urlParams.get("enrollment_id");
@@ -36,12 +38,6 @@ export default function ProcessPayment() {
   const isAdminMode = mode === "admin";
 
   const [paymentMethod, setPaymentMethod] = useState("transfer");
-  const [cardData, setCardData] = useState({
-    cardNumber: "",
-    cardName: "",
-    cardExpiry: "",
-    cardCvc: "",
-  });
   // Modal de rechazo (admin)
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
@@ -119,6 +115,107 @@ export default function ProcessPayment() {
     },
   });
 
+  const { data: enrollmentStats = [], isLoading: enrollmentCountLoading } = useQuery({
+    queryKey: ["seminar-enrollment-count", enrollment?.seminar_id],
+    enabled: !!enrollment?.seminar_id && !!user && !loading,
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase.rpc("get_seminar_enrollment_counts", {
+          seminar_ids: [enrollment.seminar_id],
+        });
+        if (error) throw error;
+        return data ?? [];
+      } catch (err) {
+        console.warn("process payment enrollment count error", err?.message || err);
+        return [];
+      }
+    },
+    staleTime: 1000 * 60 * 2,
+  });
+
+  const { data: paymentSettings } = useQuery({
+    queryKey: ["platform_settings_payment"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("platform_settings")
+        .select(
+          [
+            "enable_transfer",
+            "enable_paypal",
+            "enable_card",
+            "enable_cash",
+            "bank_name",
+            "bank_account_name",
+            "bank_account_number",
+            "bank_iban",
+            "bank_swift",
+            "bank_notes",
+            "paypal_link",
+          ].join(",")
+        )
+        .eq("id", 1)
+        .maybeSingle();
+      if (error) throw error;
+      return data ?? {};
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const availableMethods = useMemo(() => {
+    const methods = [];
+    if (paymentSettings?.enable_transfer ?? true) methods.push("transfer");
+    if (paymentSettings?.enable_paypal) methods.push("paypal");
+    if (paymentSettings?.enable_cash) methods.push("cash");
+    if (paymentSettings?.enable_card) methods.push("card");
+    return methods.length ? methods : ["transfer"];
+  }, [paymentSettings]);
+
+  useEffect(() => {
+    if (!availableMethods.includes(paymentMethod)) {
+      setPaymentMethod(availableMethods[0]);
+    }
+  }, [availableMethods, paymentMethod]);
+
+  const paypalLink = (paymentSettings?.paypal_link || "").trim();
+  const isCardBlocked = paymentMethod === "card";
+  const isPaypalMissing = paymentMethod === "paypal" && !paypalLink;
+
+  const enrollmentCount = useMemo(() => {
+    const row = Array.isArray(enrollmentStats) ? enrollmentStats[0] : enrollmentStats;
+    const count = Number(row?.enrolled_count);
+    return Number.isFinite(count) ? count : 0;
+  }, [enrollmentStats]);
+
+  const maxStudents = Number(seminar?.max_students || 0);
+  const isFull = Number.isFinite(maxStudents) && maxStudents > 0 && enrollmentCount >= maxStudents;
+
+  const paymentWindow = useMemo(
+    () =>
+      resolvePaymentWindow({
+        seminarStartDate: seminar?.start_date,
+        quote,
+        forcePayOpen: isFull,
+      }),
+    [seminar?.start_date, quote, isFull]
+  );
+
+  const {
+    paymentOpenDate,
+    paymentCloseDate,
+    isPaymentWindowClosed,
+    canPayNow,
+    isPaymentOpenByCapacity,
+  } = paymentWindow;
+
+  const formatWindowDate = (value) => {
+    if (!value) return "—";
+    return new Intl.DateTimeFormat(getIntlLocale(language), {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }).format(value);
+  };
+
   const studentPayMutation = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error(t("auth_required", "Debes iniciar sesión."));
@@ -129,6 +226,17 @@ export default function ProcessPayment() {
       // Seguridad: el enrollment debe pertenecer al usuario
       if (enrollment.student_id && enrollment.student_id !== user.id) {
         throw new Error(t("payment_not_allowed", "No tienes permiso para pagar esta inscripción."));
+      }
+
+      if (!canPayNow) {
+        throw new Error(
+          isPaymentWindowClosed
+            ? t("payment_window_closed", "La ventana de pago no está abierta.")
+            : t(
+                "payment_wait_full_or_window",
+                "Aún no puedes pagar: el seminario debe llenarse o entrar en la ventana de pago."
+              )
+        );
       }
 
       const { data, error } = await supabase.rpc("pay_enrollment", {
@@ -186,7 +294,7 @@ export default function ProcessPayment() {
     onError: (err) => toast.error(err?.message || t("payment_reject_error", "Error al rechazar pago")),
   });
 
-  if (loading || enrollmentLoading || seminarLoading) {
+  if (loading || enrollmentLoading || seminarLoading || enrollmentCountLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
         <div className="flex items-center gap-3 text-slate-600">
@@ -264,6 +372,7 @@ export default function ProcessPayment() {
 
   if (isAdminMode) {
     const paymentStatus = (enrollment.payment_status || "").toLowerCase();
+    const paymentLabel = getPaymentStatusLabel(paymentStatus, t);
     const enrollmentStatus = (enrollment.status || "").toLowerCase();
 
     const amount = enrollment.final_price ?? enrollment.amount_paid ?? quote?.estimated_price_now ?? 0;
@@ -291,7 +400,7 @@ export default function ProcessPayment() {
                 <p><b>{t("student", "Estudiante")}:</b> {enrollment.student_email || "—"}</p>
                 <p><b>{t("amount", "Monto")}:</b> ${Number(amount || 0).toFixed(2)}</p>
                 <p><b>{t("enrollment_status", "Estado inscripción")}:</b> {enrollmentStatus || "—"}</p>
-                <p><b>{t("payment_status", "Estado pago")}:</b> {paymentStatus || "—"}</p>
+                <p><b>{t("payment_status", "Estado pago")}:</b> {paymentLabel || "—"}</p>
               </div>
 
               {paymentStatus !== "pending_payment" && paymentStatus !== "pending" ? (
@@ -425,49 +534,87 @@ export default function ProcessPayment() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-white">
-                    <SelectItem value="transfer">🏦 {t("payment_method_transfer", "Transferencia")}</SelectItem>
-                    <SelectItem value="cash">💵 {t("payment_method_cash", "Efectivo")}</SelectItem>
-                    <SelectItem value="card">💳 {t("payment_method_card", "Tarjeta")}</SelectItem>
+                    {availableMethods.includes("transfer") && (
+                      <SelectItem value="transfer">🏦 {t("payment_method_transfer", "Transferencia")}</SelectItem>
+                    )}
+                    {availableMethods.includes("paypal") && (
+                      <SelectItem value="paypal">🅿️ PayPal</SelectItem>
+                    )}
+                    {availableMethods.includes("cash") && (
+                      <SelectItem value="cash">💵 {t("payment_method_cash", "Efectivo")}</SelectItem>
+                    )}
+                    {availableMethods.includes("card") && (
+                      <SelectItem value="card">💳 {t("payment_method_card", "Tarjeta")}</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
 
+              {paymentMethod === "transfer" && (
+                <div className="rounded-xl border p-4 text-sm space-y-2">
+                  <p className="text-slate-700 font-medium">{t("bank_details", "Datos bancarios")}</p>
+                  <p><b>{t("bank_name", "Banco")}:</b> {paymentSettings?.bank_name || "—"}</p>
+                  <p><b>{t("bank_account_name", "Titular")}:</b> {paymentSettings?.bank_account_name || "—"}</p>
+                  <p><b>{t("bank_account_number", "Cuenta")}:</b> {paymentSettings?.bank_account_number || "—"}</p>
+                  {paymentSettings?.bank_iban ? <p><b>IBAN:</b> {paymentSettings.bank_iban}</p> : null}
+                  {paymentSettings?.bank_swift ? <p><b>SWIFT:</b> {paymentSettings.bank_swift}</p> : null}
+                  {paymentSettings?.bank_notes ? (
+                    <p className="text-xs text-slate-500">{paymentSettings.bank_notes}</p>
+                  ) : null}
+                </div>
+              )}
+
+              {paymentMethod === "paypal" && (
+                <div className="rounded-xl border p-4 text-sm space-y-2">
+                  <p className="text-slate-700 font-medium">PayPal</p>
+                  {paypalLink ? (
+                    <a href={paypalLink} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline break-all">
+                      {paypalLink}
+                    </a>
+                  ) : (
+                    <p className="text-amber-700">{t("payment_paypal_missing", "PayPal no está configurado aún.")}</p>
+                  )}
+                </div>
+              )}
+
               {paymentMethod === "card" && (
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label>{t("card_number", "Número de tarjeta")}</Label>
-                    <Input
-                      value={cardData.cardNumber}
-                      onChange={(e) => setCardData((p) => ({ ...p, cardNumber: e.target.value }))}
-                      placeholder={t("card_number_placeholder", "1234 5678 9012 3456")}
-                      className="h-12"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{t("card_expiry", "Expira")}</Label>
-                    <Input
-                      value={cardData.cardExpiry}
-                      onChange={(e) => setCardData((p) => ({ ...p, cardExpiry: e.target.value }))}
-                      placeholder={t("card_expiry_placeholder", "MM/AA")}
-                      className="h-12"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{t("card_cvc", "CVC")}</Label>
-                    <Input
-                      value={cardData.cardCvc}
-                      onChange={(e) => setCardData((p) => ({ ...p, cardCvc: e.target.value }))}
-                      placeholder={t("card_cvc_placeholder", "123")}
-                      className="h-12"
-                    />
-                  </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  {t("payment_card_soon", "Pago con tarjeta estará disponible próximamente.")}
+                </div>
+              )}
+
+
+              {isPaymentOpenByCapacity && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                  {t(
+                    "payment_full_open_note",
+                    "El seminario llenó su cupo y el pago ya está habilitado. La fecha límite sigue siendo {close}."
+                  ).replace("{close}", formatWindowDate(paymentCloseDate))}
+                </div>
+              )}
+
+              {!canPayNow && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  {isPaymentWindowClosed
+                    ? t("payment_window_closed", "La ventana de pago no está abierta.")
+                    : t(
+                        "payment_wait_full_or_window",
+                        "Aún no puedes pagar: el seminario debe llenarse o entrar en la ventana de pago."
+                      )}
+                  {paymentOpenDate && paymentCloseDate ? (
+                    <div className="mt-1 text-amber-800">
+                      {t("payment_window_open_note", "Pagos abiertos del {open} al {close}.")
+                        .replace("{open}", formatWindowDate(paymentOpenDate))
+                        .replace("{close}", formatWindowDate(paymentCloseDate))}
+                    </div>
+                  ) : null}
                 </div>
               )}
 
               <Button
                 className="w-full h-12 bg-slate-900 hover:bg-slate-800"
                 onClick={() => studentPayMutation.mutate()}
-                disabled={studentPayMutation.isPending}
+                disabled={studentPayMutation.isPending || isCardBlocked || isPaypalMissing || !canPayNow}
               >
                 {studentPayMutation.isPending ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

@@ -17,12 +17,14 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [stableRole, setStableRole] = useState("");
 
   const [authLoading, setAuthLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(true);
 
   const mountedRef = useRef(true);
   const syncInFlightRef = useRef(false);
+  const lastUserIdRef = useRef(null);
 
   const clearAuthState = useCallback(() => {
     if (!mountedRef.current) return;
@@ -57,10 +59,11 @@ export function AuthProvider({ children }) {
     if (!authUser?.id) return null;
     try {
       const preferredLanguage = localStorage.getItem("preferred_language") || "es";
+      const metaRole = normalizeRole(authUser?.user_metadata?.role || authUser?.app_metadata?.role);
       const payload = {
         id: authUser.id,
         email: authUser.email,
-        role: "student",
+        role: metaRole || "student",
         verification_status: "none",
         is_verified: false,
         preferred_language: preferredLanguage,
@@ -84,6 +87,15 @@ export function AuthProvider({ children }) {
       console.warn("createProfile error:", error?.message || error);
       return null;
     }
+  }, []);
+
+  const applyProfile = useCallback((nextProfile, userId) => {
+    if (!mountedRef.current) return;
+    if (nextProfile) {
+      setProfile(nextProfile);
+      return;
+    }
+    setProfile((prev) => (prev?.id === userId ? prev : null));
   }, []);
 
   const resolveValidSession = useCallback(async () => {
@@ -151,7 +163,7 @@ export function AuthProvider({ children }) {
             const created = await createProfileIfMissing(validUser);
             nextProfile = created || null;
           }
-          setProfile(nextProfile);
+          applyProfile(nextProfile, validUser.id);
         }
       } catch (e) {
         console.warn(`auth sync error (${reason}):`, e?.message || e);
@@ -171,10 +183,12 @@ export function AuthProvider({ children }) {
   );
 
   const signOut = useCallback(async () => {
+    // Optimistic logout: clear UI immediately, then revoke local session.
+    clearAuthState();
     try {
-      await supabase.auth.signOut();
-    } finally {
-      clearAuthState();
+      await supabase.auth.signOut({ scope: "local" });
+    } catch (error) {
+      console.warn("signOut error:", error?.message || error);
     }
   }, [clearAuthState]);
 
@@ -216,7 +230,7 @@ export function AuthProvider({ children }) {
             const created = await createProfileIfMissing(authData.user);
             nextProfile = created || null;
           }
-          setProfile(nextProfile);
+          applyProfile(nextProfile, authData.user.id);
         }
         setAuthLoading(false);
         setProfileLoading(false);
@@ -229,12 +243,31 @@ export function AuthProvider({ children }) {
       mountedRef.current = false;
       sub?.subscription?.unsubscribe?.();
     };
-  }, [clearAuthState, fetchProfile, sync, createProfileIfMissing]);
+  }, [clearAuthState, fetchProfile, sync, createProfileIfMissing, applyProfile]);
+
+  useEffect(() => {
+    const currentId = user?.id || null;
+    if (!currentId) {
+      lastUserIdRef.current = null;
+      setStableRole("");
+      return;
+    }
+    if (lastUserIdRef.current && lastUserIdRef.current !== currentId) {
+      setStableRole("");
+    }
+    lastUserIdRef.current = currentId;
+  }, [user?.id]);
 
   const roleFromProfile = normalizeRole(profile?.role);
   const roleFromMeta = normalizeRole(user?.user_metadata?.role || user?.app_metadata?.role);
-  const role = roleFromProfile || roleFromMeta || (user ? "student" : "guest");
-  const roleReady = !!roleFromProfile || !!roleFromMeta || !user || !profileLoading;
+  useEffect(() => {
+    const nextRole = roleFromProfile || roleFromMeta;
+    if (nextRole) setStableRole(nextRole);
+  }, [roleFromProfile, roleFromMeta]);
+
+  const resolvedRole = roleFromProfile || roleFromMeta || stableRole;
+  const role = resolvedRole || (user ? "unknown" : "guest");
+  const roleReady = !!resolvedRole || !user;
   const verificationStatus = (profile?.verification_status || "none").toLowerCase();
   const isVerified = profile?.is_verified === true || profile?.is_verified === "true";
 

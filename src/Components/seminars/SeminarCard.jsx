@@ -6,7 +6,8 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Calendar, Clock, Users, MapPin, Monitor, Laptop } from 'lucide-react';
 import { format } from 'date-fns';
-import { es, enUS } from 'date-fns/locale';
+import { getDateFnsLocale } from '../../utils/dateLocale';
+import { parseDateValue } from '../../utils/dateValue';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../../utils';
 import { useLanguage } from '../shared/LanguageContext';
@@ -32,11 +33,16 @@ export default function SeminarCard({
   ratingCount = 0,
 }) {
   const { t, language } = useLanguage();
-  const dateLocale = language === 'es' ? es : enUS;
+  const dateLocale = getDateFnsLocale(language);
   
-  const basePrice = Number(seminar?.target_income || 0);
-  const currentStudents = Math.max(1, enrollmentCount || 0);
-  const pricePerStudent = basePrice > 0 ? basePrice / currentStudents : 0;
+  const targetIncome = Number(seminar?.target_income || 0);
+  const targetStudents = Math.max(1, Number(seminar?.target_students || 15));
+  const currentStudents = Math.max(1, Number(enrollmentCount || 0));
+  const denominator = Math.min(targetStudents, currentStudents);
+  const pricePerStudent =
+    targetIncome > 0
+      ? targetIncome / denominator
+      : Number(seminar?.price || 0);
   
   const ModalityIcon = modalityIcons[seminar.modality] || Monitor;
   const assetBase = import.meta.env.BASE_URL || "/";
@@ -53,7 +59,7 @@ export default function SeminarCard({
 
   const imageSrc = normalizeImageUrl(seminar?.image_url);
   
-  const savings = basePrice > 0 ? Math.round((1 - pricePerStudent / basePrice) * 100) : 0;
+  const savings = targetIncome > 0 ? Math.round((1 - pricePerStudent / targetIncome) * 100) : 0;
   const hasReviews = (ratingCount || 0) > 0;
 
   return (
@@ -94,7 +100,7 @@ export default function SeminarCard({
               <Calendar className="h-4 w-4" />
               <span>
                 {seminar.start_date
-                  ? format(new Date(seminar.start_date), 'MMM d', { locale: dateLocale })
+                  ? format(parseDateValue(seminar.start_date), 'MMM d', { locale: dateLocale })
                   : t('tbd', 'Por definir')}
               </span>
             </div>
