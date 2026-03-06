@@ -1,48 +1,53 @@
-import React, { useMemo } from 'react';
-import { Link } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { ArrowRight } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { motion } from "framer-motion";
+import { ArrowRight } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 
-// Imports des composants respectant ton arborescence VS Code
-import HeroSection from '../Components/home/HeroSection';
-import HowItWorksSection from '../Components/home/HowItWorksSection';
-import CategoriesSection from '../Components/home/CategoriesSection';
-import SeminarCard from '../Components/seminars/SeminarCard';
-import { Button } from '../Components/ui/button';
+import HeroSection from "../Components/home/HeroSection";
+import HowItWorksSection from "../Components/home/HowItWorksSection";
+import CategoriesSection from "../Components/home/CategoriesSection";
+import SeminarCard from "../Components/seminars/SeminarCard";
+import { Button } from "../Components/ui/button";
 
-// Imports des utilitaires respectant ton arborescence VS Code
-import { useLanguage } from '../Components/shared/LanguageContext';
-import { createPageUrl } from '../utils';
-import { supabase } from '../lib/supabase';
-import { useAuth } from '../context/AuthContext';
+import { useLanguage } from "../Components/shared/LanguageContext";
+import { createPageUrl } from "../utils";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../context/AuthContext";
 
 export default function Home() {
-  const { t } = useLanguage();
-  const { user, canCreateSeminar } = useAuth();
+  const { t, language: uiLanguage } = useLanguage();
+  const { user, canCreateSeminar, profile } = useAuth();
+  const [languageFilter, setLanguageFilter] = useState("preferred");
+  const preferredLanguage =
+    profile?.preferred_language || localStorage.getItem("preferred_language") || uiLanguage || "";
 
   const professorCtaHref = !user
-    ? '/login?next=/profile&intent=become-professor'
+    ? "/login?next=/profile&intent=become-professor"
     : canCreateSeminar
-      ? '/createseminar'
-      : '/profile?intent=become-professor';
+      ? "/createseminar"
+      : "/profile?intent=become-professor";
 
   const { data: featuredSeminars = [], isLoading: featuredLoading, error: featuredError } = useQuery({
-    queryKey: ['home-featured-seminars'],
+    queryKey: ["home-featured-seminars"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('seminars')
-        .select('id,title,target_income,target_students,price,category,modality,start_date,total_hours,image_url,created_at')
-        .eq('status', 'published')
-        .order('created_at', { ascending: false })
+        .from("seminars")
+        .select(
+          "id,title,target_income,target_students,excess_students,max_students,price,category,modality,start_date,total_hours,image_url,created_at,language"
+        )
+        .eq("status", "published")
+        .order("created_at", { ascending: false })
         .limit(6);
+
       if (error) throw error;
       return data || [];
     },
-    staleTime: 1000 * 60 * 5
+    staleTime: 1000 * 60 * 5,
   });
 
   const featuredIds = useMemo(() => featuredSeminars.map((s) => s.id).filter(Boolean), [featuredSeminars]);
+
   const { data: featuredRatings = [] } = useQuery({
     queryKey: ["home-featured-rating-stats", featuredIds],
     enabled: featuredIds.length > 0,
@@ -60,6 +65,7 @@ export default function Home() {
     },
     staleTime: 1000 * 60 * 5,
   });
+
   const { data: enrollmentStats = [] } = useQuery({
     queryKey: ["home-featured-enrollment-counts", featuredIds],
     enabled: featuredIds.length > 0,
@@ -87,8 +93,6 @@ export default function Home() {
     return map;
   }, [enrollmentStats]);
 
-  const getEnrollmentCount = (id) => enrollmentCountBySeminar[id] || 0;
-
   const ratingBySeminar = useMemo(() => {
     const map = {};
     (featuredRatings || []).forEach((row) => {
@@ -101,6 +105,15 @@ export default function Home() {
     return map;
   }, [featuredRatings]);
 
+  const filteredFeaturedSeminars = useMemo(() => {
+    return featuredSeminars.filter((seminar) => {
+      if (languageFilter === "all") return true;
+      if (!preferredLanguage) return true;
+      return seminar.language === preferredLanguage;
+    });
+  }, [featuredSeminars, languageFilter, preferredLanguage]);
+
+  const getEnrollmentCount = (id) => enrollmentCountBySeminar[id] || 0;
   const getRating = (id) => ratingBySeminar[id] || { avg: 0, count: 0 };
 
   return (
@@ -108,86 +121,134 @@ export default function Home() {
       <HeroSection professorCtaHref={professorCtaHref} />
       <HowItWorksSection />
       <CategoriesSection />
-      
-      {/* Featured Seminars */}
-      <section className="py-24 bg-slate-50">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex items-center justify-between mb-12">
+
+      <section className="bg-slate-50 py-24">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="mb-12 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-3xl font-bold text-slate-900 mb-2">
-                {t('featuredSeminars', 'Seminarios destacados')}
+              <h2 className="mb-2 text-3xl font-bold text-slate-900">
+                {t("featuredSeminars", "Seminarios destacados")}
               </h2>
               <p className="text-slate-600">
-                {t('featuredSeminarsSubtitle', 'Los seminarios más populares de nuestra comunidad')}
+                {t("featuredSeminarsSubtitle", "Los seminarios mas populares de nuestra comunidad")}
               </p>
             </div>
-            <Link to={createPageUrl('Seminars')}>
-              <Button variant="outline" className="hidden sm:flex items-center gap-2 rounded-xl">
-                {t('viewAll', 'Ver todos')}
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
+
+            <div className="flex items-center gap-3 self-start sm:self-auto">
+              <div className="hidden h-11 items-center rounded-xl bg-slate-100 p-1 sm:flex">
+                <button
+                  type="button"
+                  onClick={() => setLanguageFilter("preferred")}
+                  className={`h-9 rounded-lg px-3 text-sm font-medium transition ${
+                    languageFilter === "preferred" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                  }`}
+                >
+                  {t("seminars_language_preferred", "Solo mi idioma")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLanguageFilter("all")}
+                  className={`h-9 rounded-lg px-3 text-sm font-medium transition ${
+                    languageFilter === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                  }`}
+                >
+                  {t("seminars_language_all", "Todos")}
+                </button>
+              </div>
+
+              <Link to={createPageUrl("Seminars")}>
+                <Button variant="outline" className="hidden items-center gap-2 rounded-xl sm:flex">
+                  {t("viewAll", "Ver todos")}
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </Link>
+            </div>
           </div>
-          
+
           {featuredError ? (
-            <div className="rounded-2xl border border-red-100 bg-red-50 text-red-700 p-4">
-              {t('featuredSeminarsError', 'No se pudieron cargar los seminarios destacados.')}
+            <div className="rounded-2xl border border-red-100 bg-red-50 p-4 text-red-700">
+              {t("featuredSeminarsError", "No se pudieron cargar los seminarios destacados.")}
             </div>
           ) : featuredLoading ? (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-[420px] bg-white rounded-3xl animate-pulse border border-slate-100" />
+                <div key={i} className="h-[420px] animate-pulse rounded-3xl border border-slate-100 bg-white" />
               ))}
             </div>
-          ) : featuredSeminars.length === 0 ? (
+          ) : filteredFeaturedSeminars.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-500">
-              {t('featuredSeminarsEmpty', 'Aún no hay seminarios publicados.')}
+              {languageFilter === "preferred"
+                ? t("featuredSeminarsEmptyPreferred", "Aun no hay seminarios destacados en tu idioma.")
+                : t("featuredSeminarsEmpty", "Aun no hay seminarios publicados.")}
             </div>
           ) : (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {featuredSeminars.map((seminar) => {
+            <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
+              {filteredFeaturedSeminars.map((seminar) => {
                 const rating = getRating(seminar.id);
                 return (
-                <SeminarCard 
-                  key={seminar.id} 
-                  seminar={seminar} 
-                  enrollmentCount={getEnrollmentCount(seminar.id)} 
-                  ratingAvg={rating.avg}
-                  ratingCount={rating.count}
-                />
+                  <SeminarCard
+                    key={seminar.id}
+                    seminar={seminar}
+                    enrollmentCount={getEnrollmentCount(seminar.id)}
+                    ratingAvg={rating.avg}
+                    ratingCount={rating.count}
+                  />
                 );
               })}
             </div>
           )}
 
-          <div className="text-center mt-12 sm:hidden">
-            <Link to={createPageUrl('Seminars')}>
+          <div className="mt-12 text-center sm:hidden">
+            <div className="mx-auto mb-4 flex h-11 max-w-xs items-center justify-center rounded-xl bg-slate-100 p-1">
+              <button
+                type="button"
+                onClick={() => setLanguageFilter("preferred")}
+                className={`h-9 rounded-lg px-3 text-sm font-medium transition ${
+                  languageFilter === "preferred" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                }`}
+              >
+                {t("seminars_language_preferred", "Solo mi idioma")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setLanguageFilter("all")}
+                className={`h-9 rounded-lg px-3 text-sm font-medium transition ${
+                  languageFilter === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                }`}
+              >
+                {t("seminars_language_all", "Todos")}
+              </button>
+            </div>
+
+            <Link to={createPageUrl("Seminars")}>
               <Button className="w-full rounded-xl">
-                {t('viewAllSeminars', 'Ver todos los seminarios')}
-                <ArrowRight className="h-4 w-4 ml-2" />
+                {t("viewAllSeminars", "Ver todos los seminarios")}
+                <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             </Link>
           </div>
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-24 bg-gradient-to-br from-slate-900 to-slate-800">
-        <div className="max-w-4xl mx-auto px-6 text-center">
+      <section className="bg-gradient-to-br from-slate-900 to-slate-800 py-24">
+        <div className="mx-auto max-w-4xl px-6 text-center">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
           >
-            <h2 className="text-4xl font-bold text-white mb-6">
-              {t('readyToShare', '¿Listo para compartir tu conocimiento?')}
+            <h2 className="mb-6 text-4xl font-bold text-white">
+              {t("readyToShare", "Listo para compartir tu conocimiento?")}
             </h2>
-            <p className="text-xl text-white/70 mb-8 max-w-2xl mx-auto">
-              {t('readyToShareSub', 'Crea tu primer seminario y recibe el ingreso que mereces, mientras ayudas a otros a aprender.')}
+            <p className="mx-auto mb-8 max-w-2xl text-xl text-white/70">
+              {t(
+                "readyToShareSub",
+                "Crea tu primer seminario y recibe el ingreso que mereces, mientras ayudas a otros a aprender."
+              )}
             </p>
             <Link to={professorCtaHref}>
-              <Button size="lg" className="bg-white text-slate-900 hover:bg-white/90 px-8 h-14 text-lg rounded-xl">
-                {t('createSeminar', 'Crear mi seminario')}
+              <Button size="lg" className="h-14 rounded-xl bg-white px-8 text-lg text-slate-900 hover:bg-white/90">
+                {t("createSeminar", "Crear mi seminario")}
                 <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
             </Link>
@@ -195,34 +256,33 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="py-8 bg-slate-900 border-t border-slate-800">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+      <footer className="border-t border-slate-800 bg-slate-900 py-8">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center">
-                <span className="text-white font-bold text-lg">O</span>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-purple-500">
+                <span className="text-lg font-bold text-white">O</span>
               </div>
-              <div className="text-white font-bold text-xl">Okalab</div>
-              <span className="text-slate-400 text-sm hidden sm:inline">
-                © {new Date().getFullYear()} Okalab. {t('allRightsReserved', 'Todos los derechos reservados.')}
+              <div className="text-xl font-bold text-white">Okalab</div>
+              <span className="hidden text-sm text-slate-400 sm:inline">
+                © {new Date().getFullYear()} Okalab. {t("allRightsReserved", "Todos los derechos reservados.")}
               </span>
             </div>
 
             <div className="flex items-center gap-4 text-sm text-slate-400">
-              <Link to="/privacy" className="hover:text-white transition-colors">
+              <Link to="/privacy" className="transition-colors hover:text-white">
                 {t("privacy", "Privacidad")}
               </Link>
-              <Link to="/terms" className="hover:text-white transition-colors">
-                {t("terms", "Términos")}
+              <Link to="/terms" className="transition-colors hover:text-white">
+                {t("terms", "Terminos")}
               </Link>
-              <Link to="/support" className="hover:text-white transition-colors">
+              <Link to="/support" className="transition-colors hover:text-white">
                 {t("support", "Soporte")}
               </Link>
             </div>
 
-            <p className="text-slate-400 text-sm sm:hidden">
-              © {new Date().getFullYear()} Okalab. {t('allRightsReserved', 'Todos los derechos reservados.')}
+            <p className="text-sm text-slate-400 sm:hidden">
+              © {new Date().getFullYear()} Okalab. {t("allRightsReserved", "Todos los derechos reservados.")}
             </p>
           </div>
         </div>

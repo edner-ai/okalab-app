@@ -27,7 +27,7 @@ function SeminarsContent() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('seminars')
-        .select('id,title,description,image_url,category,modality,start_date,total_hours,target_income,target_students,price,status,created_at,language')
+        .select('id,title,description,image_url,category,modality,start_date,total_hours,target_income,target_students,excess_students,max_students,price,status,created_at,language')
         .eq('status', 'published')
         .order('created_at', { ascending: false });
       if (error) throw error;
