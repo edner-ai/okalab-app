@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LanguageProvider } from "./Components/shared/LanguageContext";
+import PwaUpdatePrompt from "./Components/shared/PwaUpdatePrompt.jsx";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./Layout.jsx";
@@ -54,6 +55,26 @@ function RequireAuth({ children }) {
   return children;
 }
 
+function RequireSession({ children }) {
+  const { user, authLoading } = useAuth();
+  const location = useLocation();
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-slate-500">
+        Cargando...
+      </div>
+    );
+  }
+
+  if (!user) {
+    const next = `${location.pathname}${location.search || ""}`;
+    return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;
+  }
+
+  return children;
+}
+
 function App() {
   const basePath = (import.meta.env.VITE_BASE_PATH || "/").replace(/\/$/, "") || "/";
   return (
@@ -62,6 +83,7 @@ function App() {
         <LanguageProvider>
           <Router basename={basePath}>
             <Toaster position="top-center" richColors />
+            <PwaUpdatePrompt />
 
             <Routes>
               <Route path="/login" element={<Login />} />
@@ -106,9 +128,9 @@ function App() {
                 <Route
                   path="wallet"
                   element={
-                    <RequireAuth>
+                    <RequireSession>
                       <Wallet />
-                    </RequireAuth>
+                    </RequireSession>
                   }
                 />
                 <Route

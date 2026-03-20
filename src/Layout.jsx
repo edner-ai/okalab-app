@@ -14,6 +14,7 @@ import {
   Plus,
   Bell,
   Shield,
+  CircleHelp,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -325,6 +326,13 @@ export default function Layout({ children }) {
                       <DropdownMenuItem>
                         <User className="mr-2 h-4 w-4" />
                         {tr("profile")}
+                      </DropdownMenuItem>
+                    </Link>
+
+                    <Link to="/support">
+                      <DropdownMenuItem>
+                        <CircleHelp className="mr-2 h-4 w-4" />
+                        {tr("help_menu", "Ayuda")}
                       </DropdownMenuItem>
                     </Link>
 

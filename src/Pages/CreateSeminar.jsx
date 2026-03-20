@@ -20,12 +20,43 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Calendar } from "../Components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "../Components/ui/popover";
 
-import { ArrowLeft, Calendar as CalendarIcon, Upload, Plus, X, Loader2, Check, DollarSign, Clock, Users, MapPin, Video } from "lucide-react";
+import {
+  ArrowLeft,
+  Calendar as CalendarIcon,
+  Upload,
+  Plus,
+  X,
+  Loader2,
+  Check,
+  DollarSign,
+  Clock,
+  Users,
+  MapPin,
+  Video,
+  Image as ImageIcon,
+  Link as LinkIcon,
+  PlayCircle,
+  FileText,
+  Globe,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { format, isBefore, isEqual } from "date-fns";
 import { getDateFnsLocale } from "../utils/dateLocale";
 import { resolvePaymentWindow } from "../utils/paymentWindow";
 import { parseDateValue } from "../utils/dateValue";
+import { buildContactOnboardingUrl } from "../utils/contactProfile";
+import {
+  getMeetingLinkPlaceholder,
+  getVideoConferencePlatformOptions,
+  isCustomVideoConferencePlatform,
+  supportsMeetingCredentials,
+} from "../utils/videoConference";
+import {
+  buildYouTubeThumbnailUrl,
+  buildYouTubeWatchUrl,
+  normalizeSeminarMaterials,
+  parseYouTubeVideoId,
+} from "../utils/seminarMedia";
 import { toast } from "sonner";
 
 const categoryOptions = [
@@ -57,6 +88,17 @@ const ALLOWED_MATERIAL_MIME = new Set([
   "application/x-zip-compressed",
 ]);
 
+const coverTypeOptions = [
+  { value: "image", labelKey: "seminar_cover_image", fallback: "Imagen" },
+  { value: "youtube", labelKey: "seminar_cover_youtube", fallback: "Video YouTube" },
+];
+
+const materialTypeOptions = [
+  { value: "file", labelKey: "material_type_file", fallback: "Archivo" },
+  { value: "youtube", labelKey: "material_type_youtube", fallback: "YouTube" },
+  { value: "link", labelKey: "material_type_link", fallback: "Enlace" },
+];
+
 
 
 
@@ -69,7 +111,7 @@ export default function CreateSeminar() {
   const editId = useMemo(() => new URLSearchParams(location.search).get("edit"), [location.search]);
   const isEditing = !!editId;
 
-  const { user, profile, loading, canCreateSeminar, role } = useAuth();
+  const { user, profile, loading, canCreateSeminar, role, contactProfileComplete } = useAuth();
   const { data: platformSettings } = useQuery({
     queryKey: ["platform_settings_create_seminar"],
     queryFn: async () => {
@@ -103,6 +145,10 @@ export default function CreateSeminar() {
     target_students: 15,
     excess_students: 0,
 max_students: "",
+    cover_type: "image",
+    cover_video_url: "",
+    cover_video_provider: "",
+    cover_video_id: "",
     image_url: "",
     materials: [],
     language: localStorage.getItem("preferred_language") || "es",
@@ -111,12 +157,18 @@ max_students: "",
     location_lat: null,
     location_lng: null,
     video_conference_platform: "zoom",
+    video_conference_platform_custom_name: "",
     video_conference_link: "",
     video_conference_id: "",
     video_conference_password: "",
     has_certificate: false,
     platform_fee_percent: Number(import.meta.env.VITE_DEFAULT_PLATFORM_FEE_PERCENT || 15),
     professor_bonus_percent: 30,
+  });
+  const [materialDraft, setMaterialDraft] = useState({
+    type: "file",
+    title: "",
+    url: "",
   });
 
   // Cargar seminario en modo edición (?edit=<id>)
@@ -144,7 +196,11 @@ max_students: "",
           ...data,
           start_date: parseDateValue(data.start_date),
           end_date: parseDateValue(data.end_date),
-          materials: Array.isArray(data.materials) ? data.materials : (prev.materials || []),
+          cover_type: data.cover_type === "youtube" ? "youtube" : "image",
+          cover_video_url: data.cover_video_url || "",
+          cover_video_provider: data.cover_video_provider || "",
+          cover_video_id: data.cover_video_id || "",
+          materials: normalizeSeminarMaterials(data.materials || prev.materials || []),
         }));
         loadedSeminarIdRef.current = editId;
       } catch (err) {
@@ -217,7 +273,51 @@ max_students: "",
     });
   };
 
+  const handleVideoConferencePlatformChange = (value) => {
+    setFormData((prev) => ({
+      ...prev,
+      video_conference_platform: value,
+      video_conference_platform_custom_name:
+        value === "other" ? prev.video_conference_platform_custom_name : "",
+      video_conference_id: supportsMeetingCredentials(value) ? prev.video_conference_id : "",
+      video_conference_password: supportsMeetingCredentials(value)
+        ? prev.video_conference_password
+        : "",
+    }));
+  };
+
+  const handleCoverTypeChange = (value) => {
+    setFormData((prev) => ({
+      ...prev,
+      cover_type: value === "youtube" ? "youtube" : "image",
+    }));
+  };
+
+  const handleCoverVideoUrlChange = (value) => {
+    const videoId = parseYouTubeVideoId(value);
+    setFormData((prev) => ({
+      ...prev,
+      cover_video_url: value,
+      cover_video_provider: videoId ? "youtube" : "",
+      cover_video_id: videoId || "",
+    }));
+  };
+
+  const handleMaterialDraftChange = (field, value) => {
+    setMaterialDraft((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const appendMaterial = (material) => {
+    handleChange("materials", [...(formData.materials || []), material]);
+  };
+
   const isValid = useMemo(() => {
+    const hasValidCoverVideo =
+      formData.cover_type !== "youtube" || !!parseYouTubeVideoId(formData.cover_video_url);
+    const hasValidCustomVideoPlatform =
+      !isCustomVideoConferencePlatform(formData.video_conference_platform) ||
+      !!String(formData.video_conference_platform_custom_name || "").trim();
+
     return (
       !!formData.title &&
       !!formData.description &&
@@ -227,9 +327,33 @@ max_students: "",
       !!formData.end_date &&
       !!formData.total_hours &&
       !!formData.target_income &&
-      !!formData.target_students
+      !!formData.target_students &&
+      hasValidCoverVideo &&
+      hasValidCustomVideoPlatform
     );
   }, [formData]);
+
+  const coverVideoId = useMemo(
+    () => parseYouTubeVideoId(formData.cover_video_url),
+    [formData.cover_video_url]
+  );
+
+  const coverPreviewImage = useMemo(() => {
+    if (formData.cover_type === "youtube" && coverVideoId) {
+      return buildYouTubeThumbnailUrl(coverVideoId);
+    }
+    return formData.image_url || "";
+  }, [coverVideoId, formData.cover_type, formData.image_url]);
+
+  const materialPreviewLabel = useMemo(() => {
+    const selected = materialTypeOptions.find((option) => option.value === materialDraft.type);
+    return selected ? t(selected.labelKey, selected.fallback) : t("material_type_file", "Archivo");
+  }, [materialDraft.type, t]);
+
+  const normalizedMaterials = useMemo(
+    () => normalizeSeminarMaterials(formData.materials || []),
+    [formData.materials]
+  );
 
   const paymentWindowPreview = useMemo(
     () =>
@@ -318,19 +442,79 @@ max_students: "",
       });
 
       const material = {
+        id: crypto.randomUUID(),
+        title: materialDraft.title?.trim() || file.name,
         name: file.name,
         url: res.signedUrl,
-        type: file.type?.includes("video") ? "video" : "document",
+        path: res.path,
+        bucket: res.bucket,
+        mime_type: file.type || "application/octet-stream",
+        size_bytes: file.size,
+        type: "file",
       };
 
-      handleChange("materials", [...(formData.materials || []), material]);
+      appendMaterial(material);
+      setMaterialDraft((prev) => ({ ...prev, title: "" }));
       toast.success(t("seminar_material_uploaded", "Material subido correctamente"));
     } catch (err) {
       toast.error(err?.message || t("seminar_material_upload_error", "Error al subir el material."));
     } finally {
       setUploading(false);
+      e.target.value = "";
     }
   };
+
+  const addExternalMaterial = () => {
+    const title = materialDraft.title.trim();
+    const rawUrl = materialDraft.url.trim();
+
+    if (materialDraft.type === "youtube") {
+      const videoId = parseYouTubeVideoId(rawUrl);
+      if (!videoId) {
+        toast.error(t("youtube_url_invalid", "Ingresa un enlace válido de YouTube."));
+        return;
+      }
+
+      appendMaterial({
+        id: crypto.randomUUID(),
+        title: title || t("youtube_material_default_title", "Video de YouTube"),
+        type: "youtube",
+        url: buildYouTubeWatchUrl(videoId),
+        youtube_video_id: videoId,
+      });
+      setMaterialDraft({ type: "youtube", title: "", url: "" });
+      return;
+    }
+
+    if (materialDraft.type === "link") {
+      try {
+        const normalized = new URL(rawUrl);
+        appendMaterial({
+          id: crypto.randomUUID(),
+          title: title || normalized.hostname,
+          type: "link",
+          url: normalized.toString(),
+        });
+        setMaterialDraft({ type: "link", title: "", url: "" });
+      } catch {
+        toast.error(t("material_link_invalid", "Ingresa un enlace válido."));
+      }
+    }
+  };
+
+  const buildStoredMaterials = (materials) =>
+    normalizeSeminarMaterials(materials).map((material) => ({
+      id: material.id,
+      title: material.title,
+      name: material.title,
+      type: material.type,
+      url: material.url,
+      youtube_video_id: material.youtubeVideoId || null,
+      mime_type: material.mimeType || null,
+      bucket: material.bucket || null,
+      path: material.path || null,
+      description: material.description || null,
+    }));
 
   const removeMaterial = (index) => {
     handleChange(
@@ -343,6 +527,15 @@ max_students: "",
     mutationFn: async (status) => {
       if (!user) throw new Error(t("auth_required_create_seminar", "Debes iniciar sesión para crear un seminario."));
       if (!canCreateSeminar) throw new Error(t("create_seminar_no_permission", "No tienes permisos para crear seminarios."));
+      if (!contactProfileComplete) {
+        navigate(buildContactOnboardingUrl(`${location.pathname}${location.search || ""}`));
+        throw new Error(
+          t(
+            "contact_profile_required_create_seminar",
+            "Completa tu perfil de contacto antes de crear un seminario."
+          )
+        );
+      }
 
       const { data: authData, error: authError } = await supabase.auth.getUser();
       const currentUser = authData?.user || user;
@@ -352,6 +545,9 @@ max_students: "",
 
       const professorName =
         profile?.full_name || currentUser?.user_metadata?.full_name || currentUser?.email;
+
+      const resolvedCoverVideoId =
+        formData.cover_type === "youtube" ? parseYouTubeVideoId(formData.cover_video_url) : null;
 
       const seminarData = {
         ...formData,
@@ -373,6 +569,16 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
           : parseInt(formData.target_students, 10) + parseInt(formData.excess_students, 10),
         start_date: formData.start_date ? format(formData.start_date, "yyyy-MM-dd") : null,
         end_date: formData.end_date ? format(formData.end_date, "yyyy-MM-dd") : null,
+        cover_type: formData.cover_type === "youtube" ? "youtube" : "image",
+        cover_video_url: resolvedCoverVideoId ? buildYouTubeWatchUrl(resolvedCoverVideoId) : null,
+        cover_video_provider: resolvedCoverVideoId ? "youtube" : null,
+        cover_video_id: resolvedCoverVideoId,
+        video_conference_platform_custom_name: requiresCustomPlatformName
+          ? String(formData.video_conference_platform_custom_name || "").trim()
+          : null,
+        video_conference_id: showMeetingCredentials ? formData.video_conference_id : null,
+        video_conference_password: showMeetingCredentials ? formData.video_conference_password : null,
+        materials: buildStoredMaterials(formData.materials || []),
       };
 
       seminarData.location_lat =
@@ -475,13 +681,33 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
     );
   }
 
-  const meetingPlaceholder =
-    {
-      zoom: "https://zoom.us/j/...",
-      meet: "https://meet.google.com/...",
-      teams: "https://teams.microsoft.com/l/meetup-join/...",
-      other: t("meeting_link_placeholder", "Pega aquí el enlace de la reunión..."),
-    }[formData.video_conference_platform] || t("meeting_link_placeholder", "Pega aquí el enlace...");
+  if (!contactProfileComplete) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
+        <Card className="border-0 shadow-md max-w-lg w-full">
+          <CardHeader>
+            <CardTitle>{t("contact_profile_required_title", "Completa tu perfil de contacto")}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-slate-600 text-sm">
+              {t(
+                "contact_profile_required_create_seminar",
+                "Completa tu perfil de contacto antes de crear un seminario."
+              )}
+            </p>
+            <Link to={buildContactOnboardingUrl(`${location.pathname}${location.search || ""}`)}>
+              <Button className="w-full">{t("complete_profile", "Completar perfil")}</Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const meetingPlaceholder = getMeetingLinkPlaceholder(formData.video_conference_platform, t);
+  const videoConferencePlatformOptions = getVideoConferencePlatformOptions(t);
+  const requiresCustomPlatformName = isCustomVideoConferencePlatform(formData.video_conference_platform);
+  const showMeetingCredentials = supportsMeetingCredentials(formData.video_conference_platform);
 
     return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -582,44 +808,153 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label>{t("seminar_image", "Imagen del seminario")}</Label>
-
-                    <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center hover:border-slate-300 transition-colors">
-                      {formData.image_url ? (
-                        <div className="relative inline-block">
-                          <img
-                            src={formData.image_url}
-                            alt="Preview"
-                            className="h-32 rounded-lg object-cover"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => handleChange("image_url", "")}
-                            className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full"
-                            aria-label="Quitar imagen"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      ) : (
-                        <label className="cursor-pointer">
-                          <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-                          {uploading ? (
-                            <Loader2 className="h-8 w-8 mx-auto text-slate-400 animate-spin" />
-                          ) : (
-                            <>
-                              <Upload className="h-8 w-8 mx-auto text-slate-400 mb-2" />
-                              <p className="text-sm text-slate-500">{t("seminar_image_upload", "Haz clic para subir una imagen")}</p>
-                            </>
-                          )}
-                        </label>
-                      )}
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <Label>{t("seminar_cover", "Portada del seminario")}</Label>
+                      <p className="text-xs text-slate-500">
+                        {t(
+                          "seminar_cover_help",
+                          "Elige si la portada principal será una imagen o un video de YouTube."
+                        )}
+                      </p>
                     </div>
 
-                    <p className="text-xs text-slate-500">
-                      Formatos permitidos: JPG/PNG/WebP. Máximo {MAX_IMAGE_MB}MB.
-                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {coverTypeOptions.map((option) => {
+                        const selected = formData.cover_type === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => handleCoverTypeChange(option.value)}
+                            className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+                              selected
+                                ? "border-slate-900 bg-slate-900 text-white"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                            }`}
+                          >
+                            {option.value === "youtube" ? (
+                              <PlayCircle className="h-4 w-4" />
+                            ) : (
+                              <ImageIcon className="h-4 w-4" />
+                            )}
+                            {t(option.labelKey, option.fallback)}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {formData.cover_type === "youtube" ? (
+                      <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="cover-video-url">
+                            {t("seminar_cover_youtube_url", "Enlace del video de YouTube")}
+                          </Label>
+                          <Input
+                            id="cover-video-url"
+                            value={formData.cover_video_url}
+                            onChange={(e) => handleCoverVideoUrlChange(e.target.value)}
+                            placeholder={t(
+                              "seminar_cover_youtube_placeholder",
+                              "https://www.youtube.com/watch?v=..."
+                            )}
+                            className="h-12"
+                          />
+                        </div>
+
+                        <p className="text-xs text-slate-500">
+                          {t(
+                            "seminar_cover_video_help",
+                            "Usa un enlace de YouTube para mostrar una miniatura interactiva en el seminario."
+                          )}
+                        </p>
+
+                        {formData.cover_video_url && !coverVideoId ? (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                            {t("youtube_url_invalid", "Ingresa un enlace válido de YouTube.")}
+                          </div>
+                        ) : null}
+
+                        {coverVideoId ? (
+                          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                            <div className="relative aspect-video overflow-hidden bg-slate-100">
+                              <img
+                                src={coverPreviewImage}
+                                alt={t("seminar_cover_preview", "Vista previa de la portada")}
+                                className="h-full w-full object-cover"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-slate-950/55 via-transparent to-transparent" />
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/90 shadow-lg">
+                                  <PlayCircle className="h-8 w-8 text-slate-900" />
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 px-4 py-3">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">
+                                  {t("seminar_cover_preview", "Vista previa de la portada")}
+                                </p>
+                                <p className="text-xs text-slate-500">YouTube</p>
+                              </div>
+                              <a
+                                href={buildYouTubeWatchUrl(coverVideoId)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:border-slate-300"
+                              >
+                                <LinkIcon className="h-4 w-4" />
+                                {t("watch_video", "Ver video")}
+                              </a>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center hover:border-slate-300 transition-colors bg-white">
+                          {formData.image_url ? (
+                            <div className="space-y-4">
+                              <img
+                                src={coverPreviewImage}
+                                alt={t("seminar_cover_preview", "Vista previa de la portada")}
+                                className="mx-auto h-40 rounded-xl object-cover"
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => handleChange("image_url", "")}
+                                className="inline-flex items-center gap-2"
+                              >
+                                <X className="h-4 w-4" />
+                                {t("seminar_cover_remove", "Quitar imagen")}
+                              </Button>
+                            </div>
+                          ) : (
+                            <label className="cursor-pointer">
+                              <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                              {uploading ? (
+                                <Loader2 className="h-8 w-8 mx-auto text-slate-400 animate-spin" />
+                              ) : (
+                                <>
+                                  <Upload className="h-8 w-8 mx-auto text-slate-400 mb-2" />
+                                  <p className="text-sm text-slate-500">
+                                    {t("seminar_image_upload", "Haz clic para subir una imagen")}
+                                  </p>
+                                </>
+                              )}
+                            </label>
+                          )}
+                        </div>
+
+                        <p className="text-xs text-slate-500">
+                          {t(
+                            "seminar_cover_image_help",
+                            `Formatos permitidos: JPG/PNG/WebP. Máximo ${MAX_IMAGE_MB}MB.`
+                          )}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -861,22 +1196,38 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                       <Label>{t("platform", "Plataforma")}</Label>
                       <Select
                         value={formData.video_conference_platform}
-                        onValueChange={(v) => handleChange("video_conference_platform", v)}
+                        onValueChange={handleVideoConferencePlatformChange}
                       >
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className="bg-white z-[99999] shadow-lg border">
-                          <SelectItem value="zoom">📹 {t("video_platform_zoom", "Zoom")}</SelectItem>
-                          <SelectItem value="meet">🎥 {t("video_platform_meet", "Google Meet")}</SelectItem>
-                          <SelectItem value="teams">👥 {t("video_platform_teams", "Microsoft Teams")}</SelectItem>
-                          <SelectItem value="other">💻 {t("video_platform_other", "Otra")}</SelectItem>
+                          {videoConferencePlatformOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.icon} {option.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
+                    {requiresCustomPlatformName ? (
+                      <div className="space-y-2">
+                        <Label>{t("video_platform_custom_name", "Nombre de la plataforma")}</Label>
+                        <Input
+                          value={formData.video_conference_platform_custom_name}
+                          onChange={(e) =>
+                            handleChange("video_conference_platform_custom_name", e.target.value)
+                          }
+                          placeholder={t(
+                            "video_platform_custom_name_placeholder",
+                            "Ej: Jitsi, Discord, Signal"
+                          )}
+                        />
+                      </div>
+                    ) : null}
 
                     <div className="space-y-2">
-                      <Label>{t("meetingLink", "Enlace de reunión")}</Label>
+                      <Label>{t("meetingLink", "Enlace de reuni?n")}</Label>
                       <Input
                         value={formData.video_conference_link}
                         onChange={(e) => handleChange("video_conference_link", e.target.value)}
@@ -884,24 +1235,26 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                       />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>{t("meetingId_optional", "ID de reunión (opcional)")}</Label>
-                        <Input
-                          value={formData.video_conference_id}
-                          onChange={(e) => handleChange("video_conference_id", e.target.value)}
-                          placeholder="123 456 789"
-                        />
+                    {showMeetingCredentials ? (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>{t("meetingId_optional", "ID de reuni?n (opcional)")}</Label>
+                          <Input
+                            value={formData.video_conference_id}
+                            onChange={(e) => handleChange("video_conference_id", e.target.value)}
+                            placeholder="123 456 789"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t("password_optional", "Contrase?a (opcional)")}</Label>
+                          <Input
+                            value={formData.video_conference_password}
+                            onChange={(e) => handleChange("video_conference_password", e.target.value)}
+                            placeholder="******"
+                          />
+                        </div>
                       </div>
-                      <div className="space-y-2">
-                        <Label>{t("password_optional", "Contraseña (opcional)")}</Label>
-                        <Input
-                          value={formData.video_conference_password}
-                          onChange={(e) => handleChange("video_conference_password", e.target.value)}
-                          placeholder="******"
-                        />
-                      </div>
-                    </div>
+                    ) : null}
                   </CardContent>
                 </Card>
               </motion.div>
@@ -952,27 +1305,160 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                   <CardTitle>{t("materials", "Materiales")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {formData.materials.map((material, index) => (
-                    <div key={index} className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
-                      <div className="flex-1">
-                        <p className="font-medium text-slate-900">{material.name}</p>
-                        <p className="text-sm text-slate-500">{material.type}</p>
-                      </div>
-                      <Button variant="ghost" size="icon" onClick={() => removeMaterial(index)}>
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
+                  <p className="text-sm text-slate-500">
+                    {t(
+                      "materials_help",
+                      "Agrega archivos descargables, videos de YouTube o enlaces externos para tus estudiantes."
+                    )}
+                  </p>
 
-                    <label className="flex items-center gap-3 p-4 border-2 border-dashed rounded-xl cursor-pointer hover:border-slate-300 transition-colors">
-                      <input type="file" onChange={handleMaterialUpload} className="hidden" />
-                      {uploading ? (
-                        <Loader2 className="h-5 w-5 text-slate-400 animate-spin" />
+                  {normalizedMaterials.length ? (
+                    <div className="space-y-3">
+                      {normalizedMaterials.map((material, index) => {
+                        const icon =
+                          material.type === "youtube" ? (
+                            <PlayCircle className="h-5 w-5 text-red-500" />
+                          ) : material.type === "link" ? (
+                            <Globe className="h-5 w-5 text-blue-500" />
+                          ) : (
+                            <FileText className="h-5 w-5 text-slate-600" />
+                          );
+
+                        return (
+                          <div
+                            key={material.id || index}
+                            className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4"
+                          >
+                            <div className="mt-1 flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm">
+                              {icon}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-medium text-slate-900">{material.title}</p>
+                                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600">
+                                  {t(
+                                    `material_type_${material.type}`,
+                                    material.type === "youtube"
+                                      ? "YouTube"
+                                      : material.type === "link"
+                                        ? "Enlace"
+                                        : "Archivo"
+                                  )}
+                                </span>
+                              </div>
+                              <p className="mt-1 truncate text-sm text-slate-500">
+                                {material.url || material.path || material.mimeType || material.type}
+                              </p>
+                            </div>
+                            <Button variant="ghost" size="icon" type="button" onClick={() => removeMaterial(index)}>
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                      {t("material_empty", "Aún no has agregado materiales.")}
+                    </div>
+                  )}
+
+                  <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="space-y-3">
+                      <Label>{t("material_preview", "Tipo de material")}</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {materialTypeOptions.map((option) => {
+                          const selected = materialDraft.type === option.value;
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => setMaterialDraft({ type: option.value, title: "", url: "" })}
+                              className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+                                selected
+                                  ? "border-slate-900 bg-slate-900 text-white"
+                                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                              }`}
+                            >
+                              {option.value === "youtube" ? (
+                                <PlayCircle className="h-4 w-4" />
+                              ) : option.value === "link" ? (
+                                <LinkIcon className="h-4 w-4" />
+                              ) : (
+                                <FileText className="h-4 w-4" />
+                              )}
+                              {t(option.labelKey, option.fallback)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                      <div className="space-y-2">
+                        <Label htmlFor="material-title">
+                          {t("material_title_optional", "Título del material (opcional)")}
+                        </Label>
+                        <Input
+                          id="material-title"
+                          value={materialDraft.title}
+                          onChange={(e) => handleMaterialDraftChange("title", e.target.value)}
+                          placeholder={t("material_title", "Ej: Guía del seminario")}
+                          className="h-12"
+                        />
+                      </div>
+
+                      {materialDraft.type === "file" ? (
+                        <div className="space-y-2">
+                          <Label>{t("material_type_file", "Archivo")}</Label>
+                          <label className="flex h-12 items-center gap-3 rounded-xl border-2 border-dashed border-slate-200 bg-white px-4 cursor-pointer hover:border-slate-300 transition-colors">
+                            <input type="file" accept=".pdf,.zip" onChange={handleMaterialUpload} className="hidden" />
+                            {uploading ? (
+                              <Loader2 className="h-5 w-5 text-slate-400 animate-spin" />
+                            ) : (
+                              <Upload className="h-5 w-5 text-slate-400" />
+                            )}
+                            <span className="text-sm text-slate-600">
+                              {t("add_material", "Agregar material descargable")}
+                            </span>
+                          </label>
+                        </div>
                       ) : (
-                        <Plus className="h-5 w-5 text-slate-400" />
+                        <div className="space-y-2">
+                          <Label htmlFor="material-url">
+                            {materialDraft.type === "youtube"
+                              ? t("seminar_cover_youtube_url", "Enlace del video de YouTube")
+                              : t("material_url", "Enlace del material")}
+                          </Label>
+                          <div className="flex gap-2">
+                            <Input
+                              id="material-url"
+                              value={materialDraft.url}
+                              onChange={(e) => handleMaterialDraftChange("url", e.target.value)}
+                              placeholder={
+                                materialDraft.type === "youtube"
+                                  ? t("seminar_cover_youtube_placeholder", "https://www.youtube.com/watch?v=...")
+                                  : "https://"
+                              }
+                              className="h-12"
+                            />
+                            <Button type="button" onClick={addExternalMaterial} className="h-12 shrink-0">
+                              <Plus className="mr-2 h-4 w-4" />
+                              {t("material_add", "Agregar")}
+                            </Button>
+                          </div>
+                        </div>
                       )}
-                      <span className="text-slate-500">{t("add_material", "Agregar material descargable")}</span>
-                    </label>
+                    </div>
+
+                    <p className="text-xs text-slate-500">
+                      {materialDraft.type === "file"
+                        ? t("material_file_help", `Formatos permitidos: PDF o ZIP. Máximo ${MAX_MATERIAL_MB}MB.`)
+                        : materialDraft.type === "youtube"
+                          ? t("material_youtube_help", "Comparte un enlace de YouTube para usarlo como material.")
+                          : t("material_link_help", "Comparte un enlace externo útil para el seminario.")}
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
             </motion.div>
@@ -1045,7 +1531,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
 
                   <div className="p-3 bg-emerald-500/20 rounded-lg">
                     <p className="text-xs text-white/90">
-                      {t("surplusExplanation", "💡 Si el total recaudado supera tu objetivo, {percent}% del excedente es para ti como bonus, el resto se distribuye entre estudiantes que trajeron referidos.")
+                      {t("surplusExplanation", "💡 Si el total recaudado supera tu objetivo, {percent}% del excedente neto es para ti como bonus. El resto solo se asigna a invitadores validos de los estudiantes excedentes; si no aplica un referido valido, vuelve a profesor y plataforma.")
                           .replace("{percent}", formData.professor_bonus_percent ?? 0)}
                     </p>
                   </div>

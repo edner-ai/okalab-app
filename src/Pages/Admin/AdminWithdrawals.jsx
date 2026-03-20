@@ -148,6 +148,8 @@ export default function AdminWithdrawals() {
           <tr className="text-left border-b">
             <th>{t("admin_user_email", "Email")}</th>
             <th>{t("admin_amount", "Monto")}</th>
+            <th>{t("preferred_payout_method", "Metodo de retiro")}</th>
+            <th>{t("payout_destination", "Destino")}</th>
             <th>{t("admin_status", "Estado")}</th>
             <th />
           </tr>
@@ -157,6 +159,10 @@ export default function AdminWithdrawals() {
             <tr key={w.id} className="border-b">
               <td>{w.user_email}</td>
               <td>${w.amount}</td>
+              <td>{w.method || "-"}</td>
+              <td className="max-w-[260px] truncate" title={w.destination || ""}>
+                {w.destination || "-"}
+              </td>
               <td>{w.status}</td>
               <td className="space-x-2">
                 {w.status === "pending" && (

@@ -17,6 +17,10 @@ import { toast } from "sonner";
 
 const LANGS = ["es", "en", "fr", "ht"];
 
+function normalizeTranslationValue(value) {
+  return String(value || "").trim();
+}
+
 function isRowComplete(row) {
   return LANGS.every((lang) => String(row?.[lang] || "").trim().length > 0);
 }
@@ -76,7 +80,7 @@ function buildSeedRowsFromCode() {
 
   return Array.from(keys).map((key) => ({
     key,
-    es: DEFAULT_TRANSLATIONS?.es?.[key] ?? CODE_TRANSLATION_SEED?.[key] ?? null,
+    es: CODE_TRANSLATION_SEED?.[key] ?? DEFAULT_TRANSLATIONS?.es?.[key] ?? null,
     en: DEFAULT_TRANSLATIONS?.en?.[key] ?? null,
     fr: DEFAULT_TRANSLATIONS?.fr?.[key] ?? null,
     ht: DEFAULT_TRANSLATIONS?.ht?.[key] ?? null,
@@ -94,6 +98,16 @@ function mergeSeedWithExisting(existingRows, seedRows) {
     });
     return merged;
   });
+}
+
+function getCodeBaseSpanish(row, codeSeedMap) {
+  return normalizeTranslationValue(codeSeedMap.get(row?.key)?.es);
+}
+
+function isRowOutdated(row, codeSeedMap) {
+  const currentEs = normalizeTranslationValue(row?.es);
+  const codeEs = getCodeBaseSpanish(row, codeSeedMap);
+  return currentEs.length > 0 && codeEs.length > 0 && currentEs !== codeEs;
 }
 
 function detectDelimiter(text) {
@@ -250,6 +264,7 @@ export default function AdminTranslations() {
   const [editOpen, setEditOpen] = useState(false);
   const [draft, setDraft] = useState({ key: "", es: "", en: "", fr: "", ht: "" });
   const [isNew, setIsNew] = useState(false);
+  const [editMeta, setEditMeta] = useState({ mode: "edit", currentEs: "", codeEs: "" });
   const [csvRows, setCsvRows] = useState([]);
   const [overwriteCsv, setOverwriteCsv] = useState(false);
   const csvInputRef = useRef(null);
@@ -265,6 +280,20 @@ export default function AdminTranslations() {
     },
   });
 
+  const codeSeedRows = useMemo(() => buildSeedRowsFromCode(), []);
+  const codeSeedMap = useMemo(
+    () => new Map(codeSeedRows.map((row) => [row.key, row])),
+    [codeSeedRows]
+  );
+  const outdatedRows = useMemo(
+    () => rows.filter((row) => isRowOutdated(row, codeSeedMap)),
+    [rows, codeSeedMap]
+  );
+  const outdatedKeySet = useMemo(
+    () => new Set(outdatedRows.map((row) => row.key)),
+    [outdatedRows]
+  );
+
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return rows.filter((row) => {
@@ -276,13 +305,12 @@ export default function AdminTranslations() {
       if (!matchesTerm) return false;
       if (translationFilter === "missing") return !isRowComplete(row);
       if (translationFilter === "complete") return isRowComplete(row);
+      if (translationFilter === "outdated") return isRowOutdated(row, codeSeedMap);
       return true;
     });
-  }, [rows, search, translationFilter]);
+  }, [rows, search, translationFilter, codeSeedMap]);
 
   const incompleteRows = useMemo(() => rows.filter((row) => !isRowComplete(row)), [rows]);
-
-  const codeSeedRows = useMemo(() => buildSeedRowsFromCode(), []);
   const missingCount = useMemo(() => {
     const dbSet = new Set(rows.map((row) => row.key));
     return codeSeedRows.filter((row) => !dbSet.has(row.key)).length;
@@ -303,6 +331,7 @@ export default function AdminTranslations() {
       qc.invalidateQueries({ queryKey: ["i18n"] });
       refreshTranslations?.();
       setEditOpen(false);
+      setEditMeta({ mode: "edit", currentEs: "", codeEs: "" });
     },
     onError: (err) => toast.error(err?.message || t("common_save_error", "No se pudo guardar")),
   });
@@ -396,19 +425,40 @@ export default function AdminTranslations() {
   const openNew = () => {
     setDraft({ key: "", es: "", en: "", fr: "", ht: "" });
     setIsNew(true);
+    setEditMeta({ mode: "new", currentEs: "", codeEs: "" });
     setEditOpen(true);
   };
 
-  const openEdit = (row) => {
+  const openEdit = (row, options = {}) => {
+    const codeEs = getCodeBaseSpanish(row, codeSeedMap);
+    const currentEs = normalizeTranslationValue(row?.es);
+    const useCodeSeedEs = options.useCodeSeedEs && codeEs;
     setDraft({
       key: row.key || "",
-      es: row.es || "",
+      es: useCodeSeedEs ? codeEs : row.es || "",
       en: row.en || "",
       fr: row.fr || "",
       ht: row.ht || "",
     });
     setIsNew(false);
+    setEditMeta({
+      mode: useCodeSeedEs ? "outdated" : "edit",
+      currentEs,
+      codeEs,
+    });
     setEditOpen(true);
+  };
+
+  const openPendingUpdate = (row) => {
+    openEdit(row, { useCodeSeedEs: true });
+  };
+
+  const openFirstPendingUpdate = () => {
+    if (!outdatedRows.length) {
+      toast(t("i18n_no_pending_updates", "No hay cadenas pendientes de actualizar."));
+      return;
+    }
+    openPendingUpdate(outdatedRows[0]);
   };
 
   return (
@@ -437,6 +487,15 @@ export default function AdminTranslations() {
             {seedFromCodeMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
             {t("i18n_seed_from_code", "Seed desde código")}
           </Button>
+          <Button
+            variant="outline"
+            className="border-amber-200 bg-amber-50 text-amber-900 shadow-sm hover:bg-amber-100"
+            onClick={openFirstPendingUpdate}
+            disabled={!outdatedRows.length}
+          >
+            <Pencil className="h-4 w-4 mr-2" />
+            {t("i18n_update_pending", "Actualizar pendientes")} ({outdatedRows.length})
+          </Button>
           <Button className="bg-slate-900 text-white shadow-sm hover:bg-slate-800" onClick={openNew}>
             <Plus className="h-4 w-4 mr-2" />
             {t("i18n_new_key", "Nuevo key")}
@@ -455,6 +514,9 @@ export default function AdminTranslations() {
             </span>
             <span className="px-2.5 py-1 rounded-full bg-slate-100">
               {t("i18n_count_missing", "Faltan")}: {missingCount}
+            </span>
+            <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900">
+              {t("i18n_count_outdated", "Pendientes de actualizar")}: {outdatedRows.length}
             </span>
           </div>
 
@@ -522,6 +584,7 @@ export default function AdminTranslations() {
                 <option value="all">{t("i18n_filter_all", "Todas")}</option>
                 <option value="complete">{t("i18n_filter_complete", "Traducidas")}</option>
                 <option value="missing">{t("i18n_filter_missing", "No traducidas")}</option>
+                <option value="outdated">{t("i18n_filter_outdated", "Pendientes de actualizar")}</option>
               </select>
             </div>
           </div>
@@ -565,16 +628,22 @@ export default function AdminTranslations() {
               </TableHeader>
               <TableBody>
                 {filtered.map((row) => (
-                  <TableRow key={row.key}>
+                  <TableRow key={row.key} className={outdatedKeySet.has(row.key) ? "bg-amber-50/60" : ""}>
                     <TableCell className="font-medium">{row.key}</TableCell>
                     <TableCell className="truncate max-w-[220px]">{row.es || "—"}</TableCell>
                     <TableCell className="truncate max-w-[220px]">{row.en || "—"}</TableCell>
                     <TableCell className="truncate max-w-[220px]">{row.fr || "—"}</TableCell>
                     <TableCell className="truncate max-w-[220px]">{row.ht || "—"}</TableCell>
                     <TableCell>
-                      <Button variant="outline" size="sm" onClick={() => openEdit(row)}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => (outdatedKeySet.has(row.key) ? openPendingUpdate(row) : openEdit(row))}
+                      >
                         <Pencil className="h-4 w-4 mr-2" />
-                        {t("common_edit", "Editar")}
+                        {outdatedKeySet.has(row.key)
+                          ? t("i18n_update_translation", "Actualizar")
+                          : t("common_edit", "Editar")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -585,13 +654,49 @@ export default function AdminTranslations() {
         </CardContent>
       </Card>
 
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+      <Dialog
+        open={editOpen}
+        onOpenChange={(open) => {
+          setEditOpen(open);
+          if (!open) {
+            setEditMeta({ mode: "edit", currentEs: "", codeEs: "" });
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{isNew ? t("i18n_new_key", "Nuevo key") : t("i18n_edit_translation", "Editar traducción")}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
+            {editMeta.mode === "outdated" ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                <p className="font-medium">
+                  {t("i18n_updated_base_label", "Texto base actualizado desde código")}
+                </p>
+                <p className="mt-1 text-xs text-amber-900">
+                  {t(
+                    "i18n_updated_base_help",
+                    "Se detectó que esta cadena cambió en el código. Revisa el nuevo texto base en español y actualiza las traducciones pendientes."
+                  )}
+                </p>
+                <div className="mt-3 space-y-2">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">
+                      {t("i18n_current_db_value", "Valor actual en BO")}
+                    </p>
+                    <p>{editMeta.currentEs || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">
+                      {t("i18n_new_code_value", "Nuevo texto base")}
+                    </p>
+                    <p>{editMeta.codeEs || "—"}</p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             <div className="space-y-2">
               <Label>{t("i18n_key", "Key")}</Label>
               <Input
@@ -621,7 +726,13 @@ export default function AdminTranslations() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditOpen(false);
+                setEditMeta({ mode: "edit", currentEs: "", codeEs: "" });
+              }}
+            >
               {t("common_cancel", "Cancelar")}
             </Button>
             <Button

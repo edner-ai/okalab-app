@@ -7,9 +7,7 @@ const Item = ({ to, children }) => (
     end
     className={({ isActive }) =>
       `block px-3 py-2 rounded-lg text-sm ${
-        isActive
-          ? "bg-slate-900 text-white"
-          : "text-slate-700 hover:bg-slate-100"
+        isActive ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"
       }`
     }
   >
@@ -19,7 +17,7 @@ const Item = ({ to, children }) => (
 
 const Section = ({ title, children }) => (
   <div>
-    <div className="px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+    <div className="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
       {title}
     </div>
     <div className="space-y-1">{children}</div>
@@ -32,8 +30,8 @@ export default function AdminSidebar() {
   return (
     <aside className="w-64 bg-white border-r p-4 space-y-6">
       <div className="px-3">
-        <h2 className="font-bold text-lg">{t("admin_backoffice", "Backoffice")}</h2>
-        <p className="text-xs text-slate-500 mt-1">{t("admin_subtitle", "Okalab Admin")}</p>
+        <h2 className="text-lg font-bold">{t("admin_backoffice", "Backoffice")}</h2>
+        <p className="mt-1 text-xs text-slate-500">{t("admin_subtitle", "Okalab Admin")}</p>
       </div>
 
       <Section title={t("admin_section_main", "Main")}>
@@ -53,11 +51,11 @@ export default function AdminSidebar() {
 
       <Section title={t("admin_section_settings", "Settings")}>
         <div className="space-y-1 pl-2 border-l border-slate-100">
-          <Item to="/admin/settings#app">{t("admin_settings_app", "App")}</Item>
-          <Item to="/admin/settings#fees">{t("admin_settings_fees", "Comisiones y reparto")}</Item>
-          <Item to="/admin/settings#payments">{t("admin_settings_payments", "Métodos de pago")}</Item>
-          <Item to="/admin/settings#support">{t("admin_settings_support", "Canales de soporte")}</Item>
-          <Item to="/admin/settings#seminars">{t("admin_settings_seminars", "Seminarios")}</Item>
+          <Item to="/admin/settings/app">{t("admin_settings_app", "App")}</Item>
+          <Item to="/admin/settings/fees">{t("admin_settings_fees", "Comisiones y reparto")}</Item>
+          <Item to="/admin/settings/payments">{t("admin_settings_payments", "Metodos de pago")}</Item>
+          <Item to="/admin/settings/support">{t("admin_settings_support", "Canales de soporte")}</Item>
+          <Item to="/admin/settings/seminars">{t("admin_settings_seminars", "Seminarios")}</Item>
         </div>
         <Item to="/admin/translations">{t("admin_translations", "Translations")}</Item>
       </Section>

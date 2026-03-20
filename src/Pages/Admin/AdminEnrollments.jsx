@@ -17,8 +17,23 @@ function money(n) {
   return `$${Number(n || 0).toFixed(2)}`;
 }
 
+function getLocalizedText(value, currentLanguage, fallbackLanguage = "es") {
+  if (typeof value === "string") return value.trim();
+  if (!value || typeof value !== "object") return "";
+
+  const preferredLanguages = [currentLanguage, fallbackLanguage, "en", "fr", "ht"];
+  for (const languageCode of preferredLanguages) {
+    const text = value?.[languageCode];
+    if (typeof text === "string" && text.trim()) {
+      return text.trim();
+    }
+  }
+
+  return Object.values(value).find((item) => typeof item === "string" && item.trim())?.trim() || "";
+}
+
 export default function AdminEnrollments() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [search, setSearch] = useState("");
 
   const { data: enrollments = [], isLoading } = useQuery({
@@ -43,6 +58,9 @@ export default function AdminEnrollments() {
         e.invited_by_email || "",
         e.status || "",
         e.payment_status || "",
+        e.payment_method_title || "",
+        e.payment_method_code || "",
+        e.payment_method_provider || "",
       ]
         .join(" ")
         .toLowerCase();
@@ -95,6 +113,7 @@ export default function AdminEnrollments() {
                   <TableHead>{t("admin_student_email", "Student Email")}</TableHead>
                   <TableHead>{t("common_status", "Status")}</TableHead>
                   <TableHead>{t("admin_payment_status", "Payment")}</TableHead>
+                  <TableHead>{t("payment_method", "Método de pago")}</TableHead>
                   <TableHead>{t("common_amount", "Amount")}</TableHead>
                   <TableHead>{t("admin_referred_by", "Referred By")}</TableHead>
                   <TableHead />
@@ -104,6 +123,11 @@ export default function AdminEnrollments() {
                 {filtered.map((e) => {
                   const paymentStatus = (e.payment_status || "").toLowerCase();
                   const paymentLabel = getPaymentStatusLabel(paymentStatus, t);
+                  const paymentMethodLabel =
+                    e.payment_method_title ||
+                    getLocalizedText(e.payment_method_snapshot?.title_i18n, language) ||
+                    e.payment_method_code ||
+                    "-";
                   const needsReview =
                     paymentStatus === "pending" ||
                     paymentStatus === "pending_payment";
@@ -120,6 +144,9 @@ export default function AdminEnrollments() {
                         <Badge variant="secondary">{e.status || "-"}</Badge>
                       </TableCell>
                       <TableCell>{paymentLabel || "-"}</TableCell>
+                      <TableCell className="truncate max-w-[180px]">
+                        {paymentMethodLabel}
+                      </TableCell>
                       <TableCell>
                         {money(e.final_price ?? e.amount_paid ?? 0)}
                       </TableCell>

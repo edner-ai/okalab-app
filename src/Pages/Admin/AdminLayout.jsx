@@ -98,7 +98,12 @@ export default function AdminLayout() {
             <Route path="transactions" element={<AdminTransactions />} />
             <Route path="withdrawals" element={<AdminWithdrawals />} />
             <Route path="verifications" element={<AdminVerifications />} />
-            <Route path="settings" element={<PlatformSettings />} />
+            <Route path="settings" element={<Navigate to="/admin/settings/app" replace />} />
+            <Route path="settings/app" element={<PlatformSettings section="app" />} />
+            <Route path="settings/fees" element={<PlatformSettings section="fees" />} />
+            <Route path="settings/payments" element={<PlatformSettings section="payments" />} />
+            <Route path="settings/support" element={<PlatformSettings section="support" />} />
+            <Route path="settings/seminars" element={<PlatformSettings section="seminars" />} />
             <Route path="translations" element={<AdminTranslations />} />
           </Routes>
         </main>

@@ -3,10 +3,18 @@ import { Link, useParams, useSearchParams, useNavigate, useLocation } from "reac
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
 import { useLanguage } from "../Components/shared/LanguageContext";
+import LocalCurrencyReference from "../Components/payments/LocalCurrencyReference";
 import { getIntlLocale } from "../utils/dateLocale";
 import { buildPublicAppUrl } from "../utils/appUrl";
+import { normalizeCountryCode } from "../utils/countries";
 import { resolvePaymentWindow } from "../utils/paymentWindow";
 import { parseDateValue } from "../utils/dateValue";
+import { buildContactOnboardingUrl } from "../utils/contactProfile";
+import { getVideoConferencePlatformLabel } from "../utils/videoConference";
+import {
+  normalizeSeminarCover,
+  normalizeSeminarMaterials,
+} from "../utils/seminarMedia";
 import {
   clearReferralStateForSeminar,
   getStoredReferralCodeForSeminar,
@@ -45,6 +53,8 @@ import {
   ArrowLeft,
   TrendingDown,
   Gift,
+  PlayCircle,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -77,15 +87,6 @@ function fmtDateLong(value, lang = "es") {
   return new Intl.DateTimeFormat(locale, { year: "numeric", month: "long", day: "numeric" }).format(d);
 }
 
-function normalizeImageUrl(url, fallback) {
-  if (!url) return fallback;
-  const clean = String(url).split("?")[0];
-  if (clean.includes("/storage/v1/object/sign/")) {
-    return clean.replace("/storage/v1/object/sign/", "/storage/v1/object/public/");
-  }
-  return url;
-}
-
 export default function SeminarDetails() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -104,7 +105,8 @@ export default function SeminarDetails() {
   const [copied, setCopied] = useState(false);
   const [referralPrompted, setReferralPrompted] = useState(false);
 
-  const { user, profile } = useAuth();
+  const { user, profile, contactProfileComplete } = useAuth();
+  const residenceCountryCode = normalizeCountryCode(profile?.country_code);
 
   const { t, language } = useLanguage();
   const defaultMetaRef = useRef(null);
@@ -289,7 +291,7 @@ export default function SeminarDetails() {
     const description = String(rawDescription).replace(/\s+/g, " ").trim().slice(0, 160);
 
     const title = `${seminar.title} | Okalab`;
-    const ogImage = normalizeImageUrl(seminar?.image_url, defaultImage);
+    const ogImage = normalizeSeminarCover(seminar, defaultImage).imageSrc;
     const ogUrl = buildPublicAppUrl(`/seminars/${seminarId}`);
 
     const getMeta = (attr, key) =>
@@ -400,9 +402,15 @@ export default function SeminarDetails() {
 
   const minPrice = targetIncome > 0 ? targetIncome / targetStudents : 0;
   const denomNow = Math.min(targetStudents, Math.max(1, enrollmentCount));
+  const fallbackEstimatedPriceNow =
+    targetIncome > 0 ? targetIncome / denomNow : Number(seminar?.price || 0);
+  const quotedEstimatedPriceNow = Number(quote?.estimated_price_now);
   const estimatedPriceNow =
-    Number(quote?.estimated_price_now) ||
-    (targetIncome > 0 ? targetIncome / denomNow : Number(seminar?.price || 0));
+    Number.isFinite(quotedEstimatedPriceNow) && quotedEstimatedPriceNow > 0
+      ? (targetIncome > 0
+          ? Math.min(quotedEstimatedPriceNow, fallbackEstimatedPriceNow)
+          : quotedEstimatedPriceNow)
+      : fallbackEstimatedPriceNow;
 
   const targetReached = enrollmentCount >= targetStudents; // inscritos >= objetivo
 
@@ -473,6 +481,15 @@ const showDecisionBlock =
         const nextUrl = `${location.pathname}${location.search || ""}`;
         navigate(`/login?next=${encodeURIComponent(nextUrl)}`);
         return null;
+      }
+      if (!contactProfileComplete) {
+        navigate(buildContactOnboardingUrl(`${location.pathname}${location.search || ""}`));
+        throw new Error(
+          t(
+            "contact_profile_required_enroll",
+            "Completa tu perfil de contacto antes de inscribirte."
+          )
+        );
       }
       if (isFull) {
         throw new Error(
@@ -569,30 +586,6 @@ if (error) {
     },
   });
 
-
-  const payMutation = useMutation({
-    mutationFn: async () => {
-      if (!userEnrollment?.id) throw new Error("Enrollment missing");
-      if (!canPayNow) {
-        throw new Error(
-          t(
-            "payment_wait_full_or_window",
-            "Aún no puedes pagar: el seminario debe llenarse o entrar en la ventana de pago."
-          )
-        );
-      }
-      const { error } = await supabase.rpc("pay_enrollment", {
-        p_enrollment_id: userEnrollment.id,
-      });
-      if (error) throw error;
-      return true;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["seminar-enrollments", seminarId] });
-      setShowPayDialog(false);
-    },
-  });
-
   const cancelEnrollmentMutation = useMutation({
     mutationFn: async () => {
       if (!userEnrollment?.id) throw new Error("Enrollment missing");
@@ -674,7 +667,9 @@ if (error) {
   const ModalityIcon = seminar ? (modalityIcons[seminar.modality] || Monitor) : Monitor;
   const assetBase = import.meta.env.BASE_URL || "/";
   const fallbackHeroImage = `${assetBase}assets/hero.webp`;
-  const heroImageSrc = normalizeImageUrl(seminar?.image_url, fallbackHeroImage);
+  const seminarCover = normalizeSeminarCover(seminar, fallbackHeroImage);
+  const heroImageSrc = seminarCover.imageSrc;
+  const seminarMaterials = normalizeSeminarMaterials(seminar?.materials || []);
 
   if (isLoading) {
     return (
@@ -726,6 +721,17 @@ if (error) {
                 }}
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+              {seminarCover.type === "youtube" && seminarCover.videoUrl ? (
+                <a
+                  href={seminarCover.videoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="absolute right-6 top-6 inline-flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-medium text-white backdrop-blur-sm transition hover:bg-black/70"
+                >
+                  <PlayCircle className="h-4 w-4" />
+                  <span>{t("watch_video", "Ver video")}</span>
+                </a>
+              ) : null}
               <div className="absolute bottom-6 left-6 right-6">
                 <Badge className={`${categoryColors[seminar.category] || "bg-blue-100 text-blue-700"} mb-3`}>
                   {t(seminar.category, seminar.category)}
@@ -815,7 +821,6 @@ if (error) {
                             <p className="font-medium text-slate-900">
                               {seminar.professor_name || t("professor", "Profesor")}
                             </p>
-                            <p className="text-sm text-slate-500">{seminar.professor_email || ""}</p>
                           </div>
                         </Link>
                       ) : (
@@ -829,7 +834,6 @@ if (error) {
                             <p className="font-medium text-slate-900">
                               {seminar.professor_name || t("professor", "Profesor")}
                             </p>
-                            <p className="text-sm text-slate-500">{seminar.professor_email || ""}</p>
                           </div>
                         </div>
                       )}
@@ -841,28 +845,40 @@ if (error) {
               <TabsContent value="materials" className="mt-6">
                 <Card className="border-0 shadow-md">
                   <CardContent className="p-6">
-                    {Array.isArray(seminar.materials) && seminar.materials.length > 0 ? (
+                    {seminarMaterials.length > 0 ? (
                       <div className="space-y-3">
-                        {seminar.materials.map((material, index) => (
+                        {seminarMaterials.map((material) => (
                           <a
-                            key={index}
+                            key={material.id}
                             href={material.url}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors"
                           >
                             <div className="p-2 bg-white rounded-lg">
-                              {material.type === "video" ? (
+                              {material.type === "youtube" ? (
                                 <Video className="h-5 w-5 text-purple-600" />
+                              ) : material.type === "link" ? (
+                                <ExternalLink className="h-5 w-5 text-emerald-600" />
                               ) : (
                                 <FileText className="h-5 w-5 text-blue-600" />
                               )}
                             </div>
                             <div className="flex-1">
-                              <p className="font-medium text-slate-900">{material.name}</p>
-                              <p className="text-sm text-slate-500">{material.type}</p>
+                              <p className="font-medium text-slate-900">{material.title}</p>
+                              <p className="text-sm text-slate-500">
+                                {material.type === "youtube"
+                                  ? t("seminar_cover_youtube", "Video YouTube")
+                                  : material.type === "link"
+                                    ? t("open_link", "Abrir enlace")
+                                    : t("download", "Descargar")}
+                              </p>
                             </div>
-                            <Download className="h-5 w-5 text-slate-400" />
+                            {material.type === "file" ? (
+                              <Download className="h-5 w-5 text-slate-400" />
+                            ) : (
+                              <ExternalLink className="h-5 w-5 text-slate-400" />
+                            )}
                           </a>
                         ))}
                       </div>
@@ -902,12 +918,7 @@ if (error) {
                 );
               }
 
-              const platform = {
-                zoom: t("video_platform_zoom", "Zoom"),
-                meet: t("video_platform_meet", "Google Meet"),
-                teams: t("video_platform_teams", "Microsoft Teams"),
-                other: t("video_platform_other", "Otra"),
-              }[seminar.video_conference_platform] || t("videoConference", "Videoconferencia");
+              const platform = getVideoConferencePlatformLabel(seminar, t);
               const meetingLink = seminar.video_conference_link || "";
               const meetingId = seminar.video_conference_id || "";
               const meetingPass = seminar.video_conference_password || "";
@@ -1045,6 +1056,22 @@ if (error) {
                   <p className="text-4xl font-bold text-slate-900 mt-1">
                     ${estimatedPriceNow.toFixed(2)}
                   </p>
+                  <LocalCurrencyReference
+                    usdAmount={estimatedPriceNow}
+                    countryCode={residenceCountryCode}
+                    settings={platformSettings}
+                    language={language}
+                    t={t}
+                    className="mt-4 text-left"
+                  />
+                  {user && !residenceCountryCode ? (
+                    <p className="mt-3 text-xs text-slate-500">
+                      {t(
+                        "seminar_country_hint",
+                        "Selecciona tu pais de residencia en tu perfil para ver la referencia en tu moneda y los metodos de pago correctos."
+                      )}
+                    </p>
+                  ) : null}
 
                   {targetIncome > 0 && (
                     <Badge variant="secondary" className="mt-2 bg-emerald-100 text-emerald-700">
@@ -1291,6 +1318,14 @@ if (error) {
                 <span className="text-slate-600">{t("price_after_enroll", "Precio con tu inscripción")}:</span>
                 <span className="text-2xl font-bold">${priceAfterEnroll.toFixed(2)}</span>
               </div>
+              <LocalCurrencyReference
+                usdAmount={estimatedPriceNow}
+                countryCode={residenceCountryCode}
+                settings={platformSettings}
+                language={language}
+                t={t}
+                showRate={false}
+              />
             </div>
 
             <div className="p-3 bg-amber-50 rounded-lg text-sm text-amber-900">
@@ -1367,6 +1402,13 @@ if (error) {
         <span className="text-slate-600">{t("amount_to_pay", "Monto a pagar")}:</span>
         <span className="text-2xl font-bold">${payableAmount.toFixed(2)}</span>
       </div>
+      <LocalCurrencyReference
+        usdAmount={payableAmount}
+        countryCode={residenceCountryCode}
+        settings={platformSettings}
+        language={language}
+        t={t}
+      />
 
       <div className="p-3 bg-amber-50 rounded-xl text-sm text-amber-900">
         <b>{t("important", "Importante:")}</b> {t("payment_pending_admin", "este pago queda")} <b>{t("pending", "pendiente")}</b> {t("payment_pending_admin_suffix", "hasta que un administrador lo apruebe (flujo del modelo económico).")}
@@ -1387,11 +1429,14 @@ if (error) {
         {t("common_cancel", "Cancelar")}
       </Button>
       <Button
-        onClick={() => payMutation.mutate()}
-        disabled={!canPayNow || payMutation.isPending}
+        onClick={() => {
+          setShowPayDialog(false);
+          navigate(`/process-payment?enrollment_id=${userEnrollment.id}`);
+        }}
+        disabled={!canPayNow}
         className="bg-slate-900 hover:bg-slate-800"
       >
-        {payMutation.isPending ? t("common_processing", "Procesando...") : t("confirm_payment", "Confirmar pago")}
+        {t("confirm_payment", "Confirmar pago")}
       </Button>
     </DialogFooter>
   </DialogContent>

@@ -51,9 +51,10 @@ export const DEFAULT_TRANSLATIONS = {
     referral_bonus: "Bonus por referido",
     platform_fee: "Comisión plataforma",
     withdrawal: "Retiro",
+    wallet_payment: "Pago con Saldo Okalab",
     surplus_distribution: "Distribución de excedente",
     priceExplanation: "Mientras más estudiantes se inscriban, menor será el precio para cada uno.",
-    surplusExplanation: "Si el total recaudado supera el objetivo, el excedente se reparte entre quienes invitaron nuevos estudiantes.",
+    surplusExplanation: "Si el total recaudado supera el objetivo, el excedente neto solo se asigna a invitadores validos de estudiantes excedentes; si no aplica un referido valido, vuelve a profesor y plataforma.",
     referralSuccess: "¡Comparte tu enlace para reducir tu precio y ganar bonos!",
     title: "Título",
     description: "Descripción",
@@ -135,7 +136,9 @@ export const DEFAULT_TRANSLATIONS = {
     auth_signup_disabled: "El registro esta deshabilitado en este momento.",
     auth_rate_limit: "Demasiados intentos. Espera un momento antes de volver a intentar.",
     auth_error: "Error de autenticacion",
-    auth_signup_success: "Registro exitoso. Revisa tu email si pide confirmacion."
+    auth_signup_success: "Registro exitoso. Revisa tu email si pide confirmacion.",
+    seminar_full: "No quedan cupos disponibles. Explora otros seminarios o espera una nueva fecha.",
+    seminar_full_button: "Cupos llenos"
   },
   en: {
     home: "Home",
@@ -185,9 +188,10 @@ export const DEFAULT_TRANSLATIONS = {
     referral_bonus: "Referral bonus",
     platform_fee: "Platform fee",
     withdrawal: "Withdrawal",
+    wallet_payment: "Okalab balance payment",
     surplus_distribution: "Surplus distribution",
     priceExplanation: "The more students enroll, the lower the price for everyone.",
-    surplusExplanation: "If the total collected exceeds the target, the surplus is shared among those who invited new students.",
+    surplusExplanation: "If the total collected exceeds the target, the net surplus is assigned only to valid inviters of excess students; if no valid referral applies, it returns to the professor and platform.",
     referralSuccess: "Share your link to reduce your price and earn bonuses!",
     title: "Title",
     description: "Description",
@@ -269,7 +273,9 @@ export const DEFAULT_TRANSLATIONS = {
     auth_signup_disabled: "Sign up is currently disabled.",
     auth_rate_limit: "Too many attempts. Please wait a moment before trying again.",
     auth_error: "Authentication error",
-    auth_signup_success: "Registration successful. Check your email if confirmation is required."
+    auth_signup_success: "Registration successful. Check your email if confirmation is required.",
+    seminar_full: "No spots are available. Explore other seminars or wait for a new date.",
+    seminar_full_button: "Fully booked"
   },
   fr: {
     home: "Accueil",
@@ -319,9 +325,10 @@ export const DEFAULT_TRANSLATIONS = {
     referral_bonus: "Bonus de parrainage",
     platform_fee: "Frais de plateforme",
     withdrawal: "Retrait",
+    wallet_payment: "Paiement avec solde Okalab",
     surplus_distribution: "Distribution de surplus",
     priceExplanation: "Plus il y a d'étudiants inscrits, plus le prix est bas pour tous.",
-    surplusExplanation: "Si le total collecté dépasse l'objectif, le surplus est partagé entre ceux qui ont invité de nouveaux étudiants.",
+    surplusExplanation: "Si le total collecte depasse l'objectif, le surplus net n'est attribue qu'aux inviteurs valides des etudiants excedentaires; si aucun parrainage valide ne s'applique, il revient au professeur et a la plateforme.",
     referralSuccess: "Partagez votre lien pour réduire votre prix et gagner des bonus!",
     title: "Titre",
     description: "Description",
@@ -403,7 +410,9 @@ export const DEFAULT_TRANSLATIONS = {
     auth_signup_disabled: "L'inscription est desactivee pour le moment.",
     auth_rate_limit: "Trop de tentatives. Attendez un instant avant de recommencer.",
     auth_error: "Erreur d'authentification",
-    auth_signup_success: "Inscription reussie. Verifiez votre email si une confirmation est requise."
+    auth_signup_success: "Inscription reussie. Verifiez votre email si une confirmation est requise.",
+    seminar_full: "Il n'y a plus de places disponibles. Explorez d'autres seminaires ou attendez une nouvelle date.",
+    seminar_full_button: "Complet"
   },
   ht: {
     home: "Akèy",
@@ -453,9 +462,10 @@ export const DEFAULT_TRANSLATIONS = {
     referral_bonus: "Bonifikasyon referans",
     platform_fee: "Frè platfòm",
     withdrawal: "Retrè",
+    wallet_payment: "Peman ak Saldo Okalab",
     surplus_distribution: "Distribisyon siplis",
     priceExplanation: "Plis elèv ki enskri, pi ba pri a pou tout moun.",
-    surplusExplanation: "Si total la depase objektif la, siplis la pataje ant moun ki te envite nouvo elèv yo.",
+    surplusExplanation: "Si total la depase objektif la, se selman envitatè ki valab pou etidyan anplis yo ki ka resevwa siplis nèt la; si pa gen referans valab, li retounen bay pwofesè a ak platfòm nan.",
     referralSuccess: "Pataje lyen ou pou redui pri ou epi jwenn bonifikasyon!",
     title: "Tit",
     description: "Deskripsyon",
@@ -536,7 +546,9 @@ export const DEFAULT_TRANSLATIONS = {
     auth_signup_disabled: "Enskripsyon an dezaktive kounye a.",
     auth_rate_limit: "Twop tantativ. Tann yon ti moman anvan ou eseye anko.",
     auth_error: "Ere otantifikasyon",
-    auth_signup_success: "Enskripsyon reyisi. Tcheke email ou si konfimasyon obligatwa."
+    auth_signup_success: "Enskripsyon reyisi. Tcheke email ou si konfimasyon obligatwa.",
+    seminar_full: "Pa gen plas disponib anko. Gade lot seminè oswa tann yon nouvo dat.",
+    seminar_full_button: "Plas ranpli"
   }
 };
 

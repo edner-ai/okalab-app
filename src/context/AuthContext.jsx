@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { getContactProfileState } from "../utils/contactProfile";
 
 const AuthContext = createContext(null);
 
@@ -40,7 +41,7 @@ export function AuthProvider({ children }) {
       const req = supabase
         .from("profiles")
         .select(
-          "id, full_name, email, avatar_url, bio, phone, location, preferred_language, role, verification_status, is_verified, updated_at"
+          "id, full_name, email, avatar_url, bio, phone, whatsapp_number, whatsapp_enabled, preferred_contact_method, allow_teacher_contact, allow_admin_contact, allow_student_contact, location, country_code, preferred_language, preferred_payout_method, payout_paypal_email, payout_bank_account_name, payout_bank_name, payout_bank_account_number, payout_bank_iban, payout_bank_swift, payout_mobile_wallet_full_name, payout_mobile_wallet_phone, role, verification_status, is_verified, updated_at"
         )
         .eq("id", userId)
         .maybeSingle();
@@ -59,35 +60,27 @@ export function AuthProvider({ children }) {
     if (!authUser?.id) return null;
     try {
       const preferredLanguage = localStorage.getItem("preferred_language") || "es";
-      const metaRole = normalizeRole(authUser?.user_metadata?.role || authUser?.app_metadata?.role);
-      const payload = {
-        id: authUser.id,
-        email: authUser.email,
-        role: metaRole || "student",
-        verification_status: "none",
-        is_verified: false,
-        preferred_language: preferredLanguage,
-        updated_at: new Date().toISOString(),
-      };
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .insert(payload)
-        .select()
-        .single();
+      const { error } = await supabase.rpc("ensure_my_profile", {
+        p_preferred_language: preferredLanguage,
+      });
 
       if (error) {
-        if (error.code === "23505") return null; // already exists
-        console.warn("createProfile error:", error?.message || error);
+        console.warn("ensureMyProfile error:", error?.message || error);
         return null;
       }
 
-      return data ?? payload;
+      const retry = await fetchProfile(authUser.id);
+      if (retry?.error) {
+        console.warn("fetchProfile after ensureMyProfile error:", retry.error?.message || retry.error);
+        return null;
+      }
+
+      return retry?.data ?? null;
     } catch (error) {
-      console.warn("createProfile error:", error?.message || error);
+      console.warn("ensureMyProfile error:", error?.message || error);
       return null;
     }
-  }, []);
+  }, [fetchProfile]);
 
   const applyProfile = useCallback((nextProfile, userId) => {
     if (!mountedRef.current) return;
@@ -152,19 +145,19 @@ export function AuthProvider({ children }) {
 
         setSession(validSession);
         setUser(validUser);
+        setAuthLoading(false);
 
         const profileResult = await fetchProfile(validUser.id);
         if (!mountedRef.current) return;
+        let nextProfile = profileResult?.data ?? null;
         if (profileResult?.error) {
           console.warn("fetchProfile error:", profileResult.error?.message || profileResult.error);
-        } else {
-          let nextProfile = profileResult.data;
-          if (!nextProfile) {
-            const created = await createProfileIfMissing(validUser);
-            nextProfile = created || null;
-          }
-          applyProfile(nextProfile, validUser.id);
         }
+        if (!nextProfile && !profileResult?.error) {
+          const created = await createProfileIfMissing(validUser);
+          nextProfile = created || null;
+        }
+        applyProfile(nextProfile, validUser.id);
       } catch (e) {
         console.warn(`auth sync error (${reason}):`, e?.message || e);
         if (mountedRef.current) {
@@ -172,8 +165,7 @@ export function AuthProvider({ children }) {
           setProfileLoading(false);
         }
       } finally {
-        if (mountedRef.current && !silent) {
-          setAuthLoading(false);
+        if (mountedRef.current) {
           setProfileLoading(false);
         }
         syncInFlightRef.current = false;
@@ -219,20 +211,19 @@ export function AuthProvider({ children }) {
 
         setSession(nextSession);
         setUser(authData.user);
+        setAuthLoading(false);
 
         const profileResult = await fetchProfile(authData.user.id);
         if (!mountedRef.current) return;
+        let nextProfile = profileResult?.data ?? null;
         if (profileResult?.error) {
           console.warn("fetchProfile error:", profileResult.error?.message || profileResult.error);
-        } else {
-          let nextProfile = profileResult.data;
-          if (!nextProfile) {
-            const created = await createProfileIfMissing(authData.user);
-            nextProfile = created || null;
-          }
-          applyProfile(nextProfile, authData.user.id);
         }
-        setAuthLoading(false);
+        if (!nextProfile && !profileResult?.error) {
+          const created = await createProfileIfMissing(authData.user);
+          nextProfile = created || null;
+        }
+        applyProfile(nextProfile, authData.user.id);
         setProfileLoading(false);
       } catch {
         clearAuthState();
@@ -275,6 +266,8 @@ export function AuthProvider({ children }) {
   const canCreateSeminar =
     role === "admin" || isTeacherRole || isVerified || verificationStatus === "approved";
   const isAdmin = role === "admin";
+  const contactProfileState = useMemo(() => getContactProfileState(profile, user), [profile, user]);
+  const contactProfileComplete = contactProfileState.isComplete;
 
   const value = useMemo(
     () => ({
@@ -288,10 +281,25 @@ export function AuthProvider({ children }) {
       roleReady,
       isAdmin,
       canCreateSeminar,
+      contactProfileState,
+      contactProfileComplete,
       refresh: () => sync("manual"),
       signOut,
     }),
-    [session, user, profile, authLoading, profileLoading, role, isAdmin, canCreateSeminar, sync, signOut]
+    [
+      session,
+      user,
+      profile,
+      authLoading,
+      profileLoading,
+      role,
+      isAdmin,
+      canCreateSeminar,
+      contactProfileState,
+      contactProfileComplete,
+      sync,
+      signOut,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

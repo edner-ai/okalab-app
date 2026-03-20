@@ -2,7 +2,7 @@ import React from "react";
 import { Card, CardContent, CardFooter } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Calendar, Clock, Users, MapPin, Monitor, Laptop, Info } from "lucide-react";
+import { Calendar, Clock, Users, MapPin, Monitor, Laptop, Info, PlayCircle } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { format } from "date-fns";
 import { getDateFnsLocale } from "../../utils/dateLocale";
@@ -12,6 +12,7 @@ import { createPageUrl } from "../../utils";
 import { useLanguage } from "../shared/LanguageContext";
 import { motion } from "framer-motion";
 import StarRating from "../reviews/StarRating";
+import { normalizeSeminarCover } from "../../utils/seminarMedia";
 
 const categoryColors = {
   employability: "bg-blue-100 text-blue-700 border-blue-200",
@@ -96,16 +97,8 @@ export default function SeminarCard({
   const assetBase = import.meta.env.BASE_URL || "/";
   const fallbackImage = `${assetBase}assets/hero.webp`;
 
-  const normalizeImageUrl = (url) => {
-    if (!url) return fallbackImage;
-    const clean = String(url).split("?")[0];
-    if (clean.includes("/storage/v1/object/sign/")) {
-      return clean.replace("/storage/v1/object/sign/", "/storage/v1/object/public/");
-    }
-    return url;
-  };
-
-  const imageSrc = normalizeImageUrl(seminar?.image_url);
+  const cover = normalizeSeminarCover(seminar, fallbackImage);
+  const imageSrc = cover.imageSrc;
   const savings = targetIncome > 0 ? Math.round((1 - pricePerStudent / targetIncome) * 100) : 0;
   const hasReviews = (ratingCount || 0) > 0;
   const excessPopoverTitle = t("seminar_card_excess_title", "Cupos extra para ganar");
@@ -138,6 +131,12 @@ export default function SeminarCard({
             }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+          {cover.type === "youtube" ? (
+            <div className="absolute right-4 top-4 inline-flex items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm">
+              <PlayCircle className="h-3.5 w-3.5" />
+              <span>{t("seminar_cover_youtube", "Video YouTube")}</span>
+            </div>
+          ) : null}
           <Badge
             variant="outline"
             className={`absolute left-4 top-4 border ${categoryColors[seminar.category] || "bg-slate-100"}`}

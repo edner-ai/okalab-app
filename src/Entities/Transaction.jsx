@@ -17,6 +17,7 @@ const Transaction = {
         "referral_bonus",
         "platform_fee",
         "withdrawal",
+        "wallet_payment",
         "surplus_distribution",
         "seminar_payment",
         "distribution_marker",

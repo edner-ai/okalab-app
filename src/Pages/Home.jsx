@@ -134,12 +134,12 @@ export default function Home() {
               </p>
             </div>
 
-            <div className="flex items-center gap-3 self-start sm:self-auto">
-              <div className="hidden h-11 items-center rounded-xl bg-slate-100 p-1 sm:flex">
+            <div className="flex w-full items-center gap-3 self-start sm:w-auto sm:self-auto">
+              <div className="flex h-11 min-w-0 flex-1 items-center rounded-xl bg-slate-100 p-1 sm:flex-none">
                 <button
                   type="button"
                   onClick={() => setLanguageFilter("preferred")}
-                  className={`h-9 rounded-lg px-3 text-sm font-medium transition ${
+                  className={`h-9 min-w-0 flex-1 rounded-lg px-3 text-xs font-medium transition sm:flex-none sm:text-sm ${
                     languageFilter === "preferred" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
                   }`}
                 >
@@ -148,7 +148,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setLanguageFilter("all")}
-                  className={`h-9 rounded-lg px-3 text-sm font-medium transition ${
+                  className={`h-9 rounded-lg px-3 text-xs font-medium transition sm:text-sm ${
                     languageFilter === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
                   }`}
                 >
@@ -157,7 +157,7 @@ export default function Home() {
               </div>
 
               <Link to={createPageUrl("Seminars")}>
-                <Button variant="outline" className="hidden items-center gap-2 rounded-xl sm:flex">
+                <Button variant="outline" className="h-11 shrink-0 items-center gap-2 rounded-xl px-4 text-sm">
                   {t("viewAll", "Ver todos")}
                   <ArrowRight className="h-4 w-4" />
                 </Button>
@@ -199,27 +199,6 @@ export default function Home() {
           )}
 
           <div className="mt-12 text-center sm:hidden">
-            <div className="mx-auto mb-4 flex h-11 max-w-xs items-center justify-center rounded-xl bg-slate-100 p-1">
-              <button
-                type="button"
-                onClick={() => setLanguageFilter("preferred")}
-                className={`h-9 rounded-lg px-3 text-sm font-medium transition ${
-                  languageFilter === "preferred" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-                }`}
-              >
-                {t("seminars_language_preferred", "Solo mi idioma")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setLanguageFilter("all")}
-                className={`h-9 rounded-lg px-3 text-sm font-medium transition ${
-                  languageFilter === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-                }`}
-              >
-                {t("seminars_language_all", "Todos")}
-              </button>
-            </div>
-
             <Link to={createPageUrl("Seminars")}>
               <Button className="w-full rounded-xl">
                 {t("viewAllSeminars", "Ver todos los seminarios")}

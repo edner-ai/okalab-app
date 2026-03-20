@@ -8,6 +8,7 @@ import { Button } from "../Components/ui/button";
 import { Input } from "../Components/ui/input";
 import { Textarea } from "../Components/ui/textarea";
 import { Label } from "../Components/ui/label";
+import { Switch } from "../Components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "../Components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../Components/ui/dialog";
 import {
@@ -33,6 +34,18 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import ReviewPrompt from "../Components/reviews/ReviewPrompt";
 import Cropper from "react-easy-crop";
+import { getCountryOptions, normalizeCountryCode } from "../utils/countries";
+import { getIntlLocale } from "../utils/dateLocale";
+import {
+  getContactProfileState,
+  normalizeContactMethod,
+  normalizeWhatsAppNumber,
+} from "../utils/contactProfile";
+import {
+  getAvailablePayoutMethodOptions,
+  getPayoutMethodLabel,
+  getPayoutMinimum,
+} from "../utils/payouts";
 
 const LANG_OPTIONS = [
   { value: "es", label: "🇪🇸 Español" },
@@ -94,8 +107,11 @@ export default function Profile() {
   const { t, changeLanguage } = useLanguage();
 
   // ✅ Fuente única de verdad (AuthProvider)
-  const { user, profile, loading, refresh, role, roleReady, isAdmin, signOut } = useAuth();
+  const { user, profile, loading, refresh, role, roleReady, isAdmin, signOut, contactProfileComplete } = useAuth();
   const profileRow = profile;
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const onboardingMode = searchParams.get("onboarding");
+  const onboardingNext = searchParams.get("next") || "/";
 
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -114,8 +130,24 @@ export default function Profile() {
     full_name: "",
     bio: "",
     phone: "",
+    whatsapp_number: "",
+    whatsapp_enabled: false,
+    preferred_contact_method: "",
+    allow_teacher_contact: false,
+    allow_admin_contact: false,
+    allow_student_contact: false,
     location: "",
+    country_code: "",
     preferred_language: "es",
+    preferred_payout_method: "",
+    payout_paypal_email: "",
+    payout_bank_account_name: "",
+    payout_bank_name: "",
+    payout_bank_account_number: "",
+    payout_bank_iban: "",
+    payout_bank_swift: "",
+    payout_mobile_wallet_full_name: "",
+    payout_mobile_wallet_phone: "",
     avatar_url: null,
   });
 
@@ -155,8 +187,24 @@ export default function Profile() {
       full_name: profileRow?.full_name || "",
       bio: profileRow?.bio || "",
       phone: profileRow?.phone || "",
+      whatsapp_number: profileRow?.whatsapp_number || "",
+      whatsapp_enabled: profileRow?.whatsapp_enabled === true,
+      preferred_contact_method: profileRow?.preferred_contact_method || "",
+      allow_teacher_contact: profileRow?.allow_teacher_contact === true,
+      allow_admin_contact: profileRow?.allow_admin_contact === true,
+      allow_student_contact: profileRow?.allow_student_contact === true,
       location: profileRow?.location || "",
+      country_code: profileRow?.country_code || "",
       preferred_language: profileRow?.preferred_language || defaultLang,
+      preferred_payout_method: profileRow?.preferred_payout_method || "",
+      payout_paypal_email: profileRow?.payout_paypal_email || "",
+      payout_bank_account_name: profileRow?.payout_bank_account_name || "",
+      payout_bank_name: profileRow?.payout_bank_name || "",
+      payout_bank_account_number: profileRow?.payout_bank_account_number || "",
+      payout_bank_iban: profileRow?.payout_bank_iban || "",
+      payout_bank_swift: profileRow?.payout_bank_swift || "",
+      payout_mobile_wallet_full_name: profileRow?.payout_mobile_wallet_full_name || "",
+      payout_mobile_wallet_phone: profileRow?.payout_mobile_wallet_phone || "",
       avatar_url: profileRow?.avatar_url || null,
     });
     setAvatarPreview(null);
@@ -184,6 +232,110 @@ export default function Profile() {
     (formData.avatar_url
       ? `${formData.avatar_url}${avatarVersion ? `?v=${avatarVersion}` : ""}`
       : null);
+  const countryOptions = useMemo(
+    () => getCountryOptions(getIntlLocale(formData.preferred_language || "es")),
+    [formData.preferred_language]
+  );
+
+  const draftContactProfileState = useMemo(
+    () => getContactProfileState(formData, user),
+    [formData, user]
+  );
+
+  const contactMissingLabels = useMemo(() => {
+    const labels = {
+      full_name: t("profile_full_name", "Nombre completo"),
+      preferred_language: t("profile_language", "Idioma preferido"),
+      country_code: t("profile_country", "Pais de residencia"),
+      preferred_contact_method: t("preferred_contact_method", "Medio de contacto preferido"),
+      phone: t("profile_phone", "Teléfono"),
+      whatsapp_enabled: t("whatsapp_enabled", "WhatsApp habilitado"),
+      whatsapp_number: t("whatsapp_number", "Número de WhatsApp"),
+    };
+    return draftContactProfileState.missing.map((key) => labels[key] || key);
+  }, [draftContactProfileState.missing, t]);
+
+  const contactPermissionSettings = useMemo(() => {
+    if (isAdmin) {
+      return [
+        {
+          key: "allow_teacher_contact",
+          label: t("allow_teacher_contact_admin", "Permitir contacto de profesores"),
+          help: t(
+            "allow_teacher_contact_admin_help",
+            "Autoriza que profesores verificados te contacten para coordinación o soporte operativo."
+          ),
+        },
+        {
+          key: "allow_student_contact",
+          label: t("allow_student_contact_admin", "Permitir contacto de estudiantes"),
+          help: t(
+            "allow_student_contact_admin_help",
+            "Autoriza que estudiantes puedan escribirte cuando necesiten ayuda o validación."
+          ),
+        },
+      ];
+    }
+
+    if (isProfessorRole) {
+      return [
+        {
+          key: "allow_student_contact",
+          label: t("allow_student_contact_professor", "Permitir contacto de estudiantes inscritos"),
+          help: t(
+            "allow_student_contact_professor_help",
+            "Solo estudiantes inscritos en tus seminarios podrán usar tus medios autorizados."
+          ),
+        },
+        {
+          key: "allow_admin_contact",
+          label: t("allow_admin_contact_professor", "Permitir contacto de admin"),
+          help: t(
+            "allow_admin_contact_professor_help",
+            "Autoriza que administración te contacte por soporte, incidencias o validaciones."
+          ),
+        },
+      ];
+    }
+
+    return [
+      {
+        key: "allow_teacher_contact",
+        label: t("allow_teacher_contact_student", "Permitir contacto del profesor"),
+        help: t(
+          "allow_teacher_contact_student_help",
+          "Solo profesores de seminarios donde estés inscrito podrán usar tus medios autorizados."
+        ),
+      },
+      {
+        key: "allow_admin_contact",
+        label: t("allow_admin_contact_student", "Permitir contacto de admin"),
+        help: t(
+          "allow_admin_contact_student_help",
+          "Autoriza que administración te contacte por soporte, incidencias o validaciones."
+        ),
+      },
+    ];
+  }, [isAdmin, isProfessorRole, t]);
+
+  const payoutMinimum = useMemo(
+    () => getPayoutMinimum(formData.preferred_payout_method, formData.country_code),
+    [formData.preferred_payout_method, formData.country_code]
+  );
+  const payoutMethodOptions = useMemo(
+    () => getAvailablePayoutMethodOptions(formData.country_code, t),
+    [formData.country_code, t]
+  );
+
+  useEffect(() => {
+    const isHaitiLocalMethod =
+      formData.preferred_payout_method === "moncash" ||
+      formData.preferred_payout_method === "natcash";
+
+    if (normalizeCountryCode(formData.country_code) !== "HT" && isHaitiLocalMethod) {
+      setFormData((prev) => ({ ...prev, preferred_payout_method: "" }));
+    }
+  }, [formData.country_code, formData.preferred_payout_method]);
 
   const resetCropState = () => {
     if (cropImageSrc) {
@@ -208,8 +360,24 @@ export default function Profile() {
         full_name: formData.full_name,
         bio: formData.bio,
         phone: formData.phone,
+        whatsapp_number: normalizeWhatsAppNumber(formData.whatsapp_number) || null,
+        whatsapp_enabled: !!formData.whatsapp_enabled,
+        preferred_contact_method: normalizeContactMethod(formData.preferred_contact_method) || null,
+        allow_teacher_contact: !!formData.allow_teacher_contact,
+        allow_admin_contact: !!formData.allow_admin_contact,
+        allow_student_contact: !!formData.allow_student_contact,
         location: formData.location,
+        country_code: normalizeCountryCode(formData.country_code) || null,
         preferred_language: formData.preferred_language,
+        preferred_payout_method: formData.preferred_payout_method || null,
+        payout_paypal_email: formData.payout_paypal_email.trim().toLowerCase() || null,
+        payout_bank_account_name: formData.payout_bank_account_name.trim() || null,
+        payout_bank_name: formData.payout_bank_name.trim() || null,
+        payout_bank_account_number: formData.payout_bank_account_number.trim() || null,
+        payout_bank_iban: formData.payout_bank_iban.trim() || null,
+        payout_bank_swift: formData.payout_bank_swift.trim() || null,
+        payout_mobile_wallet_full_name: formData.payout_mobile_wallet_full_name.trim() || null,
+        payout_mobile_wallet_phone: formData.payout_mobile_wallet_phone.trim() || null,
         avatar_url: formData.avatar_url,
         updated_at: new Date().toISOString(),
       };
@@ -223,6 +391,10 @@ export default function Profile() {
 
       // ✅ refresca profile global para Layout/CreateSeminar
       await refresh();
+
+      if (onboardingMode === "contact" && draftContactProfileState.isComplete) {
+        navigate(onboardingNext, { replace: true });
+      }
     } catch (e) {
       toast.error(t("profile_save_error", "No se pudo guardar"));
       console.error(e);
@@ -414,6 +586,35 @@ export default function Profile() {
         </div>
 
         <div className="space-y-6">
+          {(onboardingMode === "contact" || !contactProfileComplete) && (
+            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+              <Card className="border-emerald-200 bg-emerald-50 shadow-sm">
+                <CardHeader>
+                  <CardTitle>{t("contact_profile_required_title", "Completa tu perfil de contacto")}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm text-emerald-950">
+                  <p>
+                    {onboardingMode === "contact"
+                      ? t(
+                          "profile_complete_before_continue",
+                          "Necesitas completar estos datos antes de continuar."
+                        )
+                      : t(
+                          "contact_profile_required_body_residence",
+                          "Completa tu pais de residencia y un medio de contacto para poder inscribirte o crear seminarios."
+                        )}
+                  </p>
+                  {!draftContactProfileState.isComplete && contactMissingLabels.length > 0 && (
+                    <p>
+                      {t("contact_profile_missing_fields", "Campos pendientes")}:{" "}
+                      <span className="font-medium">{contactMissingLabels.join(", ")}</span>
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
           {/* Profile Header Card */}
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
             <Card className="border-0 shadow-xl overflow-hidden rounded-2xl">
@@ -546,26 +747,40 @@ export default function Profile() {
                   />
                 </div>
 
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>{t("profile_phone", "Teléfono")}</Label>
-                    <Input
-                      value={formData.phone}
-                      onChange={(e) => setFormData((p) => ({ ...p, phone: e.target.value }))}
-                      placeholder={t("profile_phone_placeholder", "+1 ...")}
-                      className="h-12"
-                    />
-                  </div>
+                <div className="space-y-2">
+                  <Label>{t("profile_country", "Pais de residencia")} *</Label>
+                  <Select
+                    value={formData.country_code || undefined}
+                    onValueChange={(value) => setFormData((p) => ({ ...p, country_code: value }))}
+                  >
+                    <SelectTrigger className="h-12">
+                      <SelectValue placeholder={t("profile_country_placeholder", "Selecciona tu pais")} />
+                    </SelectTrigger>
 
-                  <div className="space-y-2">
-                    <Label>{t("profile_location", "Ubicación")}</Label>
-                    <Input
-                      value={formData.location}
-                      onChange={(e) => setFormData((p) => ({ ...p, location: e.target.value }))}
-                      placeholder={t("profile_location_placeholder", "Ciudad, país")}
-                      className="h-12"
-                    />
-                  </div>
+                    <SelectContent className="max-h-80 bg-white border border-slate-200 shadow-xl rounded-xl z-50">
+                      {countryOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-slate-500">
+                    {t(
+                      "profile_country_help",
+                      "Usamos este pais para mostrar tu moneda local y los metodos de pago correctos."
+                    )}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>{t("profile_location_detail", "Ciudad o zona")}</Label>
+                  <Input
+                    value={formData.location}
+                    onChange={(e) => setFormData((p) => ({ ...p, location: e.target.value }))}
+                    placeholder={t("profile_location_detail_placeholder", "Ciudad, provincia o zona")}
+                    className="h-12"
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -591,6 +806,304 @@ export default function Profile() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div className="pt-4 border-t space-y-5">
+                  <div>
+                    <h3 className="font-semibold text-slate-900">
+                      {t("profile_contact_section", "Contacto y permisos")}
+                    </h3>
+                    <p className="text-sm text-slate-500 mt-1">
+                      {t(
+                        "profile_contact_section_help",
+                        "Estos datos se usan para coordinar contigo dentro de los seminarios y definir quién puede contactarte."
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>{t("preferred_contact_method", "Medio de contacto preferido")}</Label>
+                    <Select
+                      value={formData.preferred_contact_method || undefined}
+                      onValueChange={(v) => setFormData((p) => ({ ...p, preferred_contact_method: v }))}
+                    >
+                      <SelectTrigger className="h-12">
+                        <SelectValue placeholder={t("preferred_contact_method", "Medio de contacto preferido")} />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white border border-slate-200 shadow-xl rounded-xl z-50">
+                        <SelectItem value="email">{t("contact_method_email", "Email")}</SelectItem>
+                        <SelectItem value="phone">{t("contact_method_phone", "Teléfono")}</SelectItem>
+                        <SelectItem value="whatsapp">{t("contact_method_whatsapp", "WhatsApp")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>{t("profile_phone", "Teléfono")}</Label>
+                      <Input
+                        value={formData.phone}
+                        onChange={(e) => setFormData((p) => ({ ...p, phone: e.target.value }))}
+                        placeholder={t("profile_phone_placeholder", "+1 ...")}
+                        className="h-12"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>{t("whatsapp_number", "Número de WhatsApp")}</Label>
+                      <Input
+                        value={formData.whatsapp_number}
+                        onChange={(e) => setFormData((p) => ({ ...p, whatsapp_number: e.target.value }))}
+                        placeholder={t("profile_phone_placeholder", "+1 ...")}
+                        className="h-12"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div>
+                        <p className="font-medium text-slate-900">{t("whatsapp_enabled", "WhatsApp habilitado")}</p>
+                        <p className="text-sm text-slate-500">
+                          {t("whatsapp_enabled_help", "Actívalo si este número también recibe mensajes por WhatsApp.")}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={!!formData.whatsapp_enabled}
+                        onCheckedChange={(checked) => setFormData((p) => ({ ...p, whatsapp_enabled: checked }))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    {contactPermissionSettings.map((setting) => (
+                      <div
+                        key={setting.key}
+                        className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4"
+                      >
+                        <div>
+                          <p className="font-medium text-slate-900">{setting.label}</p>
+                          <p className="text-sm text-slate-500">{setting.help}</p>
+                        </div>
+                        <Switch
+                          checked={!!formData[setting.key]}
+                          onCheckedChange={(checked) =>
+                            setFormData((p) => ({ ...p, [setting.key]: checked }))
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t space-y-5">
+                  <div>
+                    <h3 className="font-semibold text-slate-900">
+                      {t("profile_payout_section", "Cobro y retiros")}
+                    </h3>
+                    <p className="text-sm text-slate-500 mt-1">
+                      {t(
+                        "profile_payout_section_help",
+                        "Define como prefieres recibir retiros externos. Tu Saldo Okalab tambien podra usarse para pagar seminarios."
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>{t("preferred_payout_method", "Metodo de retiro preferido")}</Label>
+                    <Select
+                      value={formData.preferred_payout_method || undefined}
+                      onValueChange={(value) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          preferred_payout_method: value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="h-12">
+                        <SelectValue
+                          placeholder={t(
+                            "preferred_payout_method_placeholder",
+                            "Selecciona como quieres recibir tus retiros"
+                          )}
+                        />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white border border-slate-200 shadow-xl rounded-xl z-50">
+                        {payoutMethodOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {(formData.preferred_payout_method === "moncash" ||
+                    formData.preferred_payout_method === "natcash") && (
+                    <div className="space-y-4">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                        <p className="font-medium text-slate-900">
+                          {t("payout_haiti_mobile_wallet_title", "Datos usados para este retiro")}
+                        </p>
+                        <p className="mt-1">
+                          {t(
+                            "payout_haiti_mobile_wallet_help",
+                            "Introduce el nombre completo y el telefono exactos de tu cuenta MonCash o NatCash."
+                          )}
+                        </p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          {t(
+                            "payout_haiti_mobile_wallet_requirements",
+                            "No transferimos a terceros. Estos datos se usan solo para este metodo de retiro."
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="grid sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>{t("payout_mobile_wallet_full_name", "Nombre completo del titular")}</Label>
+                          <Input
+                            value={formData.payout_mobile_wallet_full_name}
+                            onChange={(e) =>
+                              setFormData((prev) => ({
+                                ...prev,
+                                payout_mobile_wallet_full_name: e.target.value,
+                              }))
+                            }
+                            placeholder={t(
+                              "payout_mobile_wallet_full_name_placeholder",
+                              "Nombre exacto de la cuenta"
+                            )}
+                            className="h-12"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>{t("payout_mobile_wallet_phone", "Telefono de la cuenta")}</Label>
+                          <Input
+                            value={formData.payout_mobile_wallet_phone}
+                            onChange={(e) =>
+                              setFormData((prev) => ({
+                                ...prev,
+                                payout_mobile_wallet_phone: e.target.value,
+                              }))
+                            }
+                            placeholder={t("payout_mobile_wallet_phone_placeholder", "+509 ...")}
+                            className="h-12"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {formData.preferred_payout_method === "paypal" && (
+                    <div className="space-y-2">
+                      <Label>{t("payout_paypal_email", "Email de PayPal")}</Label>
+                      <Input
+                        value={formData.payout_paypal_email}
+                        onChange={(e) =>
+                          setFormData((prev) => ({ ...prev, payout_paypal_email: e.target.value }))
+                        }
+                        placeholder={t("email_placeholder", "user@email.com")}
+                        className="h-12"
+                      />
+                    </div>
+                  )}
+
+                  {formData.preferred_payout_method === "bank_transfer" && (
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>{t("bank_name", "Banco")}</Label>
+                        <Input
+                          value={formData.payout_bank_name}
+                          onChange={(e) =>
+                            setFormData((prev) => ({ ...prev, payout_bank_name: e.target.value }))
+                          }
+                          placeholder={t("bank_name", "Banco")}
+                          className="h-12"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>{t("bank_account_name", "Titular")}</Label>
+                        <Input
+                          value={formData.payout_bank_account_name}
+                          onChange={(e) =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              payout_bank_account_name: e.target.value,
+                            }))
+                          }
+                          placeholder={t("bank_account_name", "Titular")}
+                          className="h-12"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>{t("bank_account_number", "Cuenta")}</Label>
+                        <Input
+                          value={formData.payout_bank_account_number}
+                          onChange={(e) =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              payout_bank_account_number: e.target.value,
+                            }))
+                          }
+                          placeholder={t("bank_account_number", "Cuenta")}
+                          className="h-12"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>IBAN</Label>
+                        <Input
+                          value={formData.payout_bank_iban}
+                          onChange={(e) =>
+                            setFormData((prev) => ({ ...prev, payout_bank_iban: e.target.value }))
+                          }
+                          placeholder="IBAN"
+                          className="h-12"
+                        />
+                      </div>
+
+                      <div className="space-y-2 sm:col-span-2">
+                        <Label>SWIFT</Label>
+                        <Input
+                          value={formData.payout_bank_swift}
+                          onChange={(e) =>
+                            setFormData((prev) => ({ ...prev, payout_bank_swift: e.target.value }))
+                          }
+                          placeholder="SWIFT"
+                          className="h-12"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {formData.preferred_payout_method ? (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      <p className="font-medium text-slate-900">
+                        {t("payout_minimum_label", "Minimo de retiro")}
+                      </p>
+                      <p className="mt-1">
+                        {t(
+                          "payout_minimum_help_dynamic",
+                          "{method}: USD {amount} minimo para retiro externo."
+                        )
+                          .replace(
+                            "{method}",
+                            getPayoutMethodLabel(formData.preferred_payout_method, t)
+                          )
+                          .replace("{amount}", Number(payoutMinimum || 0).toFixed(2))}
+                      </p>
+                      <p className="mt-2 text-xs text-slate-500">
+                        {t(
+                          "okalab_wallet_usage_help",
+                          "Tu Saldo Okalab puede usarse desde USD 0.10 para pagar seminarios dentro de la plataforma."
+                        )}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
               </CardContent>
             </Card>
           </motion.div>
@@ -607,7 +1120,9 @@ export default function Profile() {
               ) : (
                 <Check className="h-4 w-4 mr-2" />
               )}
-              {t("common_save_changes", "Guardar cambios")}
+              {onboardingMode === "contact"
+                ? t("save_and_continue", "Guardar y continuar")
+                : t("common_save_changes", "Guardar cambios")}
             </Button>
 
             <Button

@@ -23,7 +23,10 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         injectRegister: "auto",
-        registerType: "autoUpdate",
+        registerType: "prompt",
+        workbox: {
+          cleanupOutdatedCaches: true,
+        },
         devOptions: {
           enabled: true,
           type: "module",

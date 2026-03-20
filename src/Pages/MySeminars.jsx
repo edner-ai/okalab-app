@@ -1,5 +1,5 @@
 // MySeminars.jsx (FIXED: Student/Professor/Admin + styling + payment buttons)
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
@@ -10,7 +10,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "../Components/ui/card"
 import { Badge } from "../Components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "../Components/ui/tabs";
 import { Input } from "../Components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../Components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../Components/ui/dialog";
 
 import {
   ArrowLeft,
@@ -19,6 +26,7 @@ import {
   Calendar,
   Clock,
   Eye,
+  CheckCircle2,
   Share2,
   Copy,
   Check,
@@ -28,11 +36,16 @@ import {
   Settings,
   CreditCard,
   Search,
+  Mail,
+  Phone,
+  MessageCircle,
+  Download,
 } from "lucide-react";
 
 import { format } from "date-fns";
 import { getDateFnsLocale } from "../utils/dateLocale";
 import { buildPublicAppUrl } from "../utils/appUrl";
+import { buildWhatsAppLink } from "../utils/contactProfile";
 import { parseDateValue } from "../utils/dateValue";
 import { resolvePaymentWindow } from "../utils/paymentWindow";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -93,6 +106,10 @@ function isPendingLikeStatus(status) {
   return !status || ["pending", "pending_payment", "unpaid", "rejected"].includes(status);
 }
 
+function canMarkSeminarCompleted(status) {
+  return ["published", "in_progress"].includes(String(status || "").toLowerCase());
+}
+
 export default function MySeminars() {
   const { user, loading, role } = useAuth();
   const { t, language } = useLanguage();
@@ -103,6 +120,10 @@ export default function MySeminars() {
 
   const isAdmin = role === "admin";
   const isProfessor = role === "professor" || role === "teacher" || isAdmin;
+  const walletCheckoutShortcut = useMemo(
+    () => new URLSearchParams(location.search).get("wallet_checkout") === "1",
+    [location.search]
+  );
 
   const [activeTab, setActiveTab] = useState("all");
   const [selectedSeminar, setSelectedSeminar] = useState(null);
@@ -111,6 +132,8 @@ export default function MySeminars() {
   const [shareLink, setShareLink] = useState("");
   const [shareTitle, setShareTitle] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
+  const [seminarPendingCompletion, setSeminarPendingCompletion] = useState(null);
+  const walletShortcutHandledRef = useRef(false);
 
   // -------- PROF/ADMIN: seminarios creados --------
   const { data: mySeminars = [], isLoading: seminarsLoading } = useQuery({
@@ -150,6 +173,18 @@ export default function MySeminars() {
         .select("*")
         .in("seminar_id", createdSeminarIds);
 
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const { data: seminarContactDirectory = [], isLoading: contactDirectoryLoading } = useQuery({
+    queryKey: ["seminar-contact-directory", selectedSeminar?.id],
+    enabled: !!user && !loading && isProfessor && !!selectedSeminar?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_seminar_contact_directory", {
+        p_seminar_id: selectedSeminar.id,
+      });
       if (error) throw error;
       return data ?? [];
     },
@@ -237,6 +272,82 @@ export default function MySeminars() {
     return map;
   }, [enrolledSeminarStats]);
 
+  const enrolledSeminarById = useMemo(
+    () => new Map(enrolledSeminars.map((seminar) => [seminar.id, seminar])),
+    [enrolledSeminars]
+  );
+
+  const walletShortcutTargetEnrollment = useMemo(() => {
+    if (isProfessor || !walletCheckoutShortcut || !paymentWindowSettings) return null;
+
+    for (const enrollment of myEnrollments) {
+      const seminar = enrolledSeminarById.get(enrollment?.seminar_id);
+      if (!seminar) continue;
+
+      const payState = normalizePayStatus(enrollment?.payment_status || enrollment?.status);
+      if (!["unpaid", "rejected"].includes(payState)) continue;
+
+      const enrollmentCount = Number(enrolledCountBySeminarId.get(seminar.id) ?? 0);
+      const maxStudents = Number(seminar?.max_students || 0);
+      const isFull = Number.isFinite(maxStudents) && maxStudents > 0 && enrollmentCount >= maxStudents;
+      const paymentWindow = resolvePaymentWindow({
+        seminarStartDate: seminar.start_date,
+        settings: paymentWindowSettings,
+        forcePayOpen: isFull,
+      });
+
+      if (paymentWindow.canPayNow) {
+        return enrollment;
+      }
+    }
+
+    return null;
+  }, [
+    enrolledCountBySeminarId,
+    enrolledSeminarById,
+    isProfessor,
+    myEnrollments,
+    paymentWindowSettings,
+    walletCheckoutShortcut,
+  ]);
+
+  useEffect(() => {
+    walletShortcutHandledRef.current = false;
+  }, [walletCheckoutShortcut, user?.id]);
+
+  useEffect(() => {
+    if (isProfessor || !walletCheckoutShortcut || walletShortcutHandledRef.current) return;
+    if (loading || myEnrollmentsLoading || enrolledSeminarsLoading || enrolledSeminarStatsLoading) return;
+
+    walletShortcutHandledRef.current = true;
+
+    if (walletShortcutTargetEnrollment?.id) {
+      navigate(
+        `/process-payment?enrollment_id=${walletShortcutTargetEnrollment.id}&prefill_wallet=max`,
+        { replace: true }
+      );
+      return;
+    }
+
+    navigate("/my-seminars", { replace: true });
+    toast(
+      t(
+        "wallet_no_pending_payments_shortcut",
+        "No tienes pagos pendientes abiertos para usar tu Saldo Okalab en este momento."
+      )
+    );
+  }, [
+    enrolledSeminarStatsLoading,
+    enrolledSeminarsLoading,
+    isProfessor,
+    loading,
+    myEnrollmentsLoading,
+    navigate,
+    t,
+    walletCheckoutShortcut,
+    walletShortcutTargetEnrollment,
+  ]);
+
   // -------- Mutations (prof/admin) --------
   const deleteMutation = useMutation({
     mutationFn: async (id) => {
@@ -258,12 +369,59 @@ export default function MySeminars() {
       if (error) throw error;
       return true;
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["my-seminars-created"] });
+      setSelectedSeminar((current) =>
+        current?.id === variables?.id ? { ...current, status: variables.status } : current
+      );
+      setSeminarPendingCompletion(null);
       toast.success(t("status_updated", "Estado actualizado"));
     },
     onError: (e) => toast.error(e?.message || t("status_update_error", "No se pudo actualizar")),
   });
+
+  const requestMarkCompleted = (seminar) => {
+    if (!seminar?.id || !canMarkSeminarCompleted(seminar?.status)) return;
+    setSeminarPendingCompletion(seminar);
+  };
+
+  const renderCompletionDialog = () => (
+    <Dialog
+      open={!!seminarPendingCompletion}
+      onOpenChange={(open) => {
+        if (!open) setSeminarPendingCompletion(null);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t("complete_seminar", "Marcar como completado")}</DialogTitle>
+          <DialogDescription>
+            {t(
+              "complete_seminar_confirm_message",
+              "Marca este seminario como completado solo cuando haya finalizado realmente. Esta acción puede liberar bonos retenidos y habilitar procesos posteriores."
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setSeminarPendingCompletion(null)}>
+            {t("common_cancel", "Cancelar")}
+          </Button>
+          <Button
+            onClick={() => {
+              if (!seminarPendingCompletion?.id) return;
+              updateStatusMutation.mutate({
+                id: seminarPendingCompletion.id,
+                status: "completed",
+              });
+              setSeminarPendingCompletion(null);
+            }}
+          >
+            {t("complete_seminar", "Marcar como completado")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 
   // Helpers (prof/admin)
   const getEnrollmentCount = (seminarId) =>
@@ -284,6 +442,83 @@ export default function MySeminars() {
     setShareTitle(seminar?.title || "");
     setShareCopied(false);
     setShareDialogOpen(true);
+  };
+
+  const emailContactList = useMemo(
+    () => seminarContactDirectory.map((row) => row.student_email).filter(Boolean),
+    [seminarContactDirectory]
+  );
+
+  const copyContactDirectory = async () => {
+    const content = seminarContactDirectory
+      .map((row) =>
+        [
+          row.student_name || row.student_email || row.student_id,
+          row.student_email || "",
+          row.whatsapp_number || "",
+          row.phone || "",
+          row.preferred_contact_method || "",
+          row.allow_teacher_contact ? t("yes", "Sí") : t("no", "No"),
+        ].join("\t")
+      )
+      .join("\n");
+
+    if (!content) {
+      toast.error(t("teacher_contact_directory_empty", "Aún no hay contactos disponibles."));
+      return;
+    }
+
+    await navigator.clipboard.writeText(content);
+    toast.success(t("contacts_copied", "Contactos copiados"));
+  };
+
+  const exportContactDirectory = () => {
+    if (!seminarContactDirectory.length) {
+      toast.error(t("teacher_contact_directory_empty", "Aún no hay contactos disponibles."));
+      return;
+    }
+
+    const rows = [
+      ["name", "email", "whatsapp", "phone", "preferred_contact_method", "allow_teacher_contact", "payment_status", "amount_due"],
+      ...seminarContactDirectory.map((row) => [
+        row.student_name || "",
+        row.student_email || "",
+        row.whatsapp_number || "",
+        row.phone || "",
+        row.preferred_contact_method || "",
+        row.allow_teacher_contact ? "true" : "false",
+        row.payment_status || "",
+        String(row.amount_due ?? 0),
+      ]),
+    ];
+
+    const csv = rows
+      .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `seminar-contacts-${selectedSeminar?.id || "export"}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
+  const emailAllStudents = () => {
+    if (!emailContactList.length) {
+      toast.error(t("teacher_contact_directory_no_email", "No hay correos autorizados para contactar."));
+      return;
+    }
+
+    const subject = selectedSeminar?.title
+      ? t("teacher_contact_email_subject", "Okalab · Comunicación del seminario") + `: ${selectedSeminar.title}`
+      : t("teacher_contact_email_subject", "Okalab · Comunicación del seminario");
+    window.location.href = `mailto:?bcc=${encodeURIComponent(
+      emailContactList.join(",")
+    )}&subject=${encodeURIComponent(subject)}`;
   };
 
   const shareMessage = shareLink
@@ -635,7 +870,7 @@ export default function MySeminars() {
 
     return (
       <div className="min-h-screen bg-slate-50 py-8">
-        <div className="max-w-6xl mx-auto px-6">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <Button variant="ghost" onClick={() => setSelectedSeminar(null)} className="mb-6">
             <ArrowLeft className="h-4 w-4 mr-2" />
             {t("back_to_my_seminars", "Volver a mis seminarios")}
@@ -644,7 +879,7 @@ export default function MySeminars() {
           <div className="space-y-6">
             <Card className="border-0 shadow-md">
               <CardHeader>
-                <div className="flex items-start justify-between">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <CardTitle className="text-2xl mb-2">{selectedSeminar.title}</CardTitle>
                     <div className="flex flex-wrap gap-2">
@@ -657,17 +892,33 @@ export default function MySeminars() {
                       <Badge variant="outline">{t("collected", "Recaudado")}: ${totalCollected.toFixed(2)}</Badge>
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:justify-end">
+                    {canMarkSeminarCompleted(selectedSeminar.status) ? (
+                      <Button
+                        size="sm"
+                        className="w-full justify-start bg-emerald-600 hover:bg-emerald-700 sm:justify-center"
+                        onClick={() => requestMarkCompleted(selectedSeminar)}
+                        disabled={updateStatusMutation.isPending}
+                      >
+                        {updateStatusMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4 mr-2" />
+                        )}
+                        {t("complete_seminar", "Marcar como completado")}
+                      </Button>
+                    ) : null}
                     <Button
                       variant="outline"
                       size="sm"
+                      className="w-full justify-start sm:justify-center"
                       onClick={() => openShareDialog(selectedSeminar)}
                     >
                       <Share2 className="h-4 w-4 mr-2" />
                       {t("invite", "Invitar")}
                     </Button>
-                    <Link to={`/seminars/${selectedSeminar.id}`}>
-                      <Button variant="outline" size="sm">
+                    <Link to={`/seminars/${selectedSeminar.id}`} className="w-full">
+                      <Button variant="outline" size="sm" className="w-full justify-start sm:justify-center">
                         <Eye className="h-4 w-4 mr-2" />
                         {t("view_page", "Ver página")}
                       </Button>
@@ -675,6 +926,7 @@ export default function MySeminars() {
                     <Button
                       variant="outline"
                       size="sm"
+                      className="w-full justify-start sm:justify-center sm:col-span-2 lg:col-span-1"
                       onClick={() => navigate(`/createseminar?edit=${selectedSeminar.id}`)}
                     >
                       <Settings className="h-4 w-4 mr-2" />
@@ -737,6 +989,145 @@ export default function MySeminars() {
               </CardContent>
             </Card>
 
+            <Card className="border-0 shadow-md">
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <CardTitle>{t("teacher_contact_directory", "Directorio de contacto")}</CardTitle>
+                    <p className="text-sm text-slate-500 mt-1">
+                      {t(
+                        "teacher_contact_directory_help",
+                        "Contacta estudiantes autorizados por email, WhatsApp o teléfono."
+                      )}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 w-full sm:w-auto sm:flex sm:flex-wrap">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-start sm:w-auto sm:justify-center"
+                      onClick={emailAllStudents}
+                    >
+                      <Mail className="h-4 w-4 mr-2" />
+                      {t("email_all_students", "Email a todos")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-start sm:w-auto sm:justify-center"
+                      onClick={copyContactDirectory}
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      {t("copy_contacts", "Copiar contactos")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-start sm:w-auto sm:justify-center"
+                      onClick={exportContactDirectory}
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      {t("export_contacts", "Exportar contactos")}
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {contactDirectoryLoading ? (
+                  <div className="flex items-center gap-3 text-slate-500 text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>{t("common_loading", "Cargando…")}</span>
+                  </div>
+                ) : seminarContactDirectory.length === 0 ? (
+                  <p className="text-slate-500 text-sm">
+                    {t("teacher_contact_directory_empty", "Aún no hay contactos disponibles.")}
+                  </p>
+                ) : (
+                  seminarContactDirectory.map((row) => {
+                    const paymentLabel = getPaymentStatusLabel(
+                      normalizePayStatus(row.payment_status || row.enrollment_status),
+                      t
+                    );
+                    const contactAllowed =
+                      !!row.student_email || !!row.phone || !!row.whatsapp_number;
+                    const whatsappLink = row.whatsapp_number
+                      ? buildWhatsAppLink(
+                          row.whatsapp_number,
+                          t("teacher_contact_default_message", "Hola, te escribo por tu inscripción en Okalab.")
+                        )
+                      : "";
+
+                    return (
+                      <div
+                        key={row.enrollment_id}
+                        className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <div>
+                            <p className="font-medium text-slate-900">
+                              {row.student_name || row.student_email || row.student_id}
+                            </p>
+                            <div className="flex flex-wrap gap-2 mt-2 text-xs">
+                              <Badge variant="outline">
+                                {t("payment", "Pago")}: {paymentLabel}
+                              </Badge>
+                              <Badge variant="outline">
+                                {t("amount", "Monto")}: ${Number(row.amount_due || 0).toFixed(2)}
+                              </Badge>
+                              {row.preferred_contact_method ? (
+                                <Badge variant="outline">
+                                  {t("preferred_contact_method", "Medio de contacto preferido")}:{" "}
+                                  {t(`contact_method_${row.preferred_contact_method}`, row.preferred_contact_method)}
+                                </Badge>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {row.student_email ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => (window.location.href = `mailto:${row.student_email}`)}
+                              >
+                                <Mail className="h-4 w-4 mr-2" />
+                                {t("send_email", "Enviar email")}
+                              </Button>
+                            ) : null}
+                            {row.whatsapp_number ? (
+                              <Button variant="outline" size="sm" asChild>
+                                <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
+                                  <MessageCircle className="h-4 w-4 mr-2" />
+                                  {t("open_whatsapp", "Abrir WhatsApp")}
+                                </a>
+                              </Button>
+                            ) : null}
+                            {row.phone ? (
+                              <Button variant="outline" size="sm" asChild>
+                                <a href={`tel:${row.phone}`}>
+                                  <Phone className="h-4 w-4 mr-2" />
+                                  {t("call_student", "Llamar")}
+                                </a>
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                        {!contactAllowed ? (
+                          <p className="text-sm text-slate-500">
+                            {row.allow_teacher_contact
+                              ? t("contact_info_hidden", "Información de contacto no disponible.")
+                              : t(
+                                  "contact_not_allowed",
+                                  "Este estudiante no autorizó compartir su información de contacto."
+                                )}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })
+                )}
+              </CardContent>
+            </Card>
+
             <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
               <DialogContent className="sm:max-w-md">
                 <DialogHeader>
@@ -791,6 +1182,7 @@ export default function MySeminars() {
                 </div>
               </DialogContent>
             </Dialog>
+            {renderCompletionDialog()}
           </div>
         </div>
       </div>
@@ -983,6 +1375,15 @@ export default function MySeminars() {
                                     </DropdownMenuItem>
                                   )}
 
+                                  {canMarkSeminarCompleted(seminar.status) && (
+                                    <DropdownMenuItem
+                                      onClick={() => requestMarkCompleted(seminar)}
+                                    >
+                                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                                      {t("complete_seminar", "Marcar como completado")}
+                                    </DropdownMenuItem>
+                                  )}
+
                                   <DropdownMenuItem
                                     onClick={() => deleteMutation.mutate(seminar.id)}
                                     className="text-red-600"
@@ -1054,6 +1455,7 @@ export default function MySeminars() {
             </AnimatePresence>
           </div>
         )}
+        {renderCompletionDialog()}
       </div>
     </div>
   );

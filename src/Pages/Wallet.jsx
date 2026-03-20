@@ -3,6 +3,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../Components/shared/LanguageContext";
+import {
+  getPayoutDestinationSummary,
+  getPayoutMethodLabel,
+  getPayoutMinimum,
+  getPayoutProfileState,
+} from "../utils/payouts";
 
 import { Button } from "../Components/ui/button";
 import { Input } from "../Components/ui/input";
@@ -26,16 +32,51 @@ const INCOME_TRANSACTION_TYPES = new Set([
 
 function money(n) {
   const value = Number(String(n ?? 0).replace(/,/g, ""));
-  return `$${(Number.isFinite(value) ? value : 0).toFixed(2)}`;
+  const normalized = Number.isFinite(value) ? value : 0;
+  const prefix = normalized < 0 ? "-$" : "$";
+  return `${prefix}${Math.abs(normalized).toFixed(2)}`;
+}
+
+function buildEmptyWallet(email, isProfessor) {
+  return {
+    user_email: email,
+    user_type: isProfessor ? "professor" : "student",
+    balance: 0,
+    pending_balance: 0,
+    total_earned: 0,
+    total_withdrawn: 0,
+  };
+}
+
+function dedupeTransactions(items = []) {
+  const byId = new Map();
+
+  for (const tx of items) {
+    if (!tx) continue;
+    const fallbackKey = [
+      tx.user_id || "",
+      tx.user_email || "",
+      tx.type || "",
+      tx.amount || 0,
+      tx.created_at || "",
+      tx.description || "",
+    ].join("|");
+    byId.set(tx.id || fallbackKey, tx);
+  }
+
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime()
+  );
 }
 
 function TransactionList({ transactions }) {
   const { t } = useLanguage();
+
   if (!transactions?.length) {
     return (
       <Card className="border-0 shadow-md">
         <CardContent className="py-10 text-center text-slate-500">
-          {t("wallet_no_transactions", "No hay transacciones todavía.")}
+          {t("wallet_no_transactions", "No hay transacciones todavia.")}
         </CardContent>
       </Card>
     );
@@ -51,7 +92,8 @@ function TransactionList({ transactions }) {
                 {tx.description || t(tx.type, tx.type)}
               </p>
               <p className="text-xs text-slate-500">
-                {t(tx.type, tx.type)} · {t(tx.status, tx.status || "—")} · {tx.created_at ? new Date(tx.created_at).toLocaleString() : ""}
+                {t(tx.type, tx.type)} · {t(tx.status, tx.status || "-")} ·{" "}
+                {tx.created_at ? new Date(tx.created_at).toLocaleString() : ""}
               </p>
             </div>
             <div className="font-bold text-slate-900 self-end sm:self-auto">{money(tx.amount)}</div>
@@ -63,7 +105,7 @@ function TransactionList({ transactions }) {
 }
 
 export default function Wallet() {
-  const { user, loading, role } = useAuth();
+  const { user, profile, authLoading, profileLoading, role } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
 
@@ -71,43 +113,48 @@ export default function Wallet() {
   const [withdrawAmount, setWithdrawAmount] = useState("");
 
   const isProfessor = role === "admin" || role === "professor" || role === "teacher";
+  const showWalletSeminarAction = !isProfessor;
   const email = user?.email?.toLowerCase() || "";
+  const emptyWallet = useMemo(() => buildEmptyWallet(email, isProfessor), [email, isProfessor]);
+  const payoutProfileState = useMemo(() => getPayoutProfileState(profile), [profile]);
+  const payoutMethodLabel = useMemo(
+    () => getPayoutMethodLabel(payoutProfileState.preferredPayoutMethod, t),
+    [payoutProfileState.preferredPayoutMethod, t]
+  );
+  const payoutDestination = useMemo(
+    () => getPayoutDestinationSummary(profile, t),
+    [profile, t]
+  );
+  const payoutMinimum = useMemo(
+    () => getPayoutMinimum(payoutProfileState.preferredPayoutMethod, payoutProfileState.countryCode),
+    [payoutProfileState.preferredPayoutMethod, payoutProfileState.countryCode]
+  );
 
-  const { data: wallet, isLoading: walletLoading, error: walletError } = useQuery({
-    queryKey: ["wallet", email],
-    enabled: !!email && !loading,
+  const { data: wallet = emptyWallet, isLoading: walletLoading, error: walletError } = useQuery({
+    queryKey: ["wallet", user?.id, email, isProfessor],
+    enabled: !!user?.id && !!email && !authLoading,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const selectClause = "user_email,user_type,balance,pending_balance,total_earned,total_withdrawn,updated_at";
+
+      const exactResult = await supabase
         .from("wallets")
-        .select("*")
+        .select(selectClause)
+        .eq("user_email", email)
+        .maybeSingle();
+
+      if (exactResult.error) throw exactResult.error;
+      if (exactResult.data) return exactResult.data;
+
+      const fallbackResult = await supabase
+        .from("wallets")
+        .select(selectClause)
         .ilike("user_email", email)
         .maybeSingle();
-      if (error) throw error;
 
-      if (data) return data;
-
-      // crear wallet si no existe (según tu SQL)
-      const payload = {
-        user_email: email,
-        user_type: isProfessor ? "professor" : "student",
-        balance: 0,
-        pending_balance: 0,
-        total_earned: 0,
-        total_withdrawn: 0,
-        updated_at: new Date().toISOString(),
-      };
-
-      const { error: insErr } = await supabase.from("wallets").insert([payload]);
-      if (insErr) throw insErr;
-
-      const { data: created, error: selErr } = await supabase
-        .from("wallets")
-        .select("*")
-        .ilike("user_email", email)
-        .maybeSingle();
-      if (selErr) throw selErr;
-      return created;
+      if (fallbackResult.error) throw fallbackResult.error;
+      return fallbackResult.data ?? emptyWallet;
     },
+    staleTime: 1000 * 60,
   });
 
   useEffect(() => {
@@ -116,26 +163,51 @@ export default function Wallet() {
   }, [walletError, t]);
 
   const { data: transactions = [], isLoading: txLoading } = useQuery({
-    queryKey: ["wallet_transactions", email, user?.id],
-    enabled: !!email && !loading,
+    queryKey: ["wallet_transactions", user?.id, email],
+    enabled: !!user?.id && !!email && !authLoading,
     queryFn: async () => {
-      // tu tabla tiene user_email a veces null, así que hacemos OR por seguridad
-      const { data, error } = await supabase
+      const selectClause = "id,user_id,user_email,amount,type,description,status,created_at";
+
+      const userTransactionsRequest = supabase
         .from("wallet_transactions")
-        .select("*")
-        .or(`user_email.ilike.${email},user_id.eq.${user.id}`)
-        .order("created_at", { ascending: false });
+        .select(selectClause)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(100);
 
-      if (error) throw error;
-      return data ?? [];
+      const emailTransactionsRequest = (async () => {
+        const exactResult = await supabase
+          .from("wallet_transactions")
+          .select(selectClause)
+          .eq("user_email", email)
+          .order("created_at", { ascending: false })
+          .limit(100);
+
+        if (exactResult.error) throw exactResult.error;
+        if ((exactResult.data ?? []).length > 0) return exactResult.data ?? [];
+
+        const fallbackResult = await supabase
+          .from("wallet_transactions")
+          .select(selectClause)
+          .ilike("user_email", email)
+          .order("created_at", { ascending: false })
+          .limit(100);
+
+        if (fallbackResult.error) throw fallbackResult.error;
+        return fallbackResult.data ?? [];
+      })();
+
+      const [{ data: byUserId, error: userIdError }, byEmail] = await Promise.all([
+        userTransactionsRequest,
+        emailTransactionsRequest,
+      ]);
+
+      if (userIdError) throw userIdError;
+
+      return dedupeTransactions([...(byUserId ?? []), ...byEmail]).slice(0, 100);
     },
+    staleTime: 1000 * 30,
   });
-
-  // Stats (similar a Base44)
-  const referralCount = useMemo(
-    () => transactions.filter((t) => t.type === "referral_bonus").length,
-    [transactions]
-  );
 
   const heldReferralTotal = useMemo(
     () =>
@@ -145,49 +217,98 @@ export default function Wallet() {
     [transactions]
   );
 
-  // Mis seminarios / inscripciones (para los 3 cards de arriba)
-  const { data: mySeminars = [] } = useQuery({
+  const { data: mySeminarsCount = 0 } = useQuery({
     queryKey: ["wallet-seminars-count", user?.id, isProfessor],
-    enabled: !!user && !loading,
+    enabled: !!user?.id && !authLoading && isProfessor,
     queryFn: async () => {
-      if (!isProfessor) return [];
-      const { data, error } = await supabase.from("seminars").select("id").eq("professor_id", user.id);
+      const { count, error } = await supabase
+        .from("seminars")
+        .select("id", { count: "exact", head: true })
+        .eq("professor_id", user.id);
+
       if (error) throw error;
-      return data ?? [];
+      return count ?? 0;
     },
+    staleTime: 1000 * 60,
   });
 
-  const { data: myEnrollments = [] } = useQuery({
+  const { data: myEnrollmentsCount = 0 } = useQuery({
     queryKey: ["wallet-enrollments-count", user?.id],
-    enabled: !!user && !loading,
+    enabled: !!user?.id && !authLoading,
     queryFn: async () => {
-      const { data, error } = await supabase.from("enrollments").select("id").eq("student_id", user.id);
+      const { count, error } = await supabase
+        .from("enrollments")
+        .select("id", { count: "exact", head: true })
+        .eq("student_id", user.id);
+
       if (error) throw error;
-      return data ?? [];
+      return count ?? 0;
     },
+    staleTime: 1000 * 60,
   });
 
-  // Withdraw = crea tx + mueve balance -> pending_balance (igual concepto)
+  const { data: referralCount = 0 } = useQuery({
+    queryKey: ["wallet-referrals-count", user?.id],
+    enabled: !!user?.id && !authLoading,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_my_referral_count");
+
+      if (error) throw error;
+      return Number(data || 0);
+    },
+    staleTime: 1000 * 60,
+  });
+
+  const payoutSummaryLabel = profileLoading
+    ? t("admin_loading_profile", "Cargando perfil...")
+    : payoutProfileState.isComplete
+      ? payoutMethodLabel
+      : t("payout_not_configured", "No configurado");
+
+  const payoutSummaryDestination = profileLoading
+    ? t("common_loading", "Cargando...")
+    : payoutProfileState.isComplete
+      ? payoutDestination
+      : t(
+          "payout_setup_required_help",
+          "Configura tu metodo de retiro en Perfil antes de solicitar retiros externos."
+        );
+
+  const payoutMinimumLabel = profileLoading
+    ? null
+    : payoutProfileState.preferredPayoutMethod
+      ? `${t("payout_minimum_label", "Minimo de retiro")}: $${Number(payoutMinimum || 0).toFixed(2)}`
+      : null;
+
   const withdrawMutation = useMutation({
     mutationFn: async () => {
       const amount = Number(withdrawAmount);
 
       if (!amount || amount <= 0) {
-        throw new Error(t("wallet_invalid_amount", "Monto inválido"));
+        throw new Error(t("wallet_invalid_amount", "Monto invalido"));
+      }
+
+      if (!payoutProfileState.isComplete) {
+        throw new Error(
+          t(
+            "payout_profile_incomplete_error",
+            "Completa tu metodo de retiro y tu pais de residencia antes de solicitar un retiro externo."
+          )
+        );
       }
 
       const { error } = await supabase.rpc("request_withdrawal", {
         p_amount: amount,
-        p_method: null,
-        p_destination: null,
+        p_method: payoutProfileState.preferredPayoutMethod,
+        p_destination: payoutDestination,
       });
 
       if (error) throw error;
     },
 
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["wallet", email] });
-      queryClient.invalidateQueries({ queryKey: ["wallet_transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["wallet", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["wallet_transactions", user?.id] });
       setShowWithdrawDialog(false);
       setWithdrawAmount("");
       toast.success(t("wallet_withdraw_request_sent", "Solicitud de retiro enviada"));
@@ -195,7 +316,7 @@ export default function Wallet() {
     onError: (e) => toast.error(e?.message || t("wallet_withdraw_request_error", "No se pudo solicitar retiro")),
   });
 
-  if (loading || !user) {
+  if (authLoading || !user) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
@@ -204,7 +325,7 @@ export default function Wallet() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 py-6 md:py-8 overflow-x-hidden">
+    <div className="min-h-screen bg-slate-50 py-4 pb-8 md:py-8 overflow-x-hidden">
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
         <div className="flex items-center gap-3 mb-6">
           <Link to="/">
@@ -219,9 +340,7 @@ export default function Wallet() {
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Main */}
           <div className="lg:col-span-2 space-y-6 order-2 lg:order-1">
-            {/* Top stats (como tu captura) */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
                 <Card className="border-0 shadow-md">
@@ -232,7 +351,7 @@ export default function Wallet() {
                       </div>
                       <div>
                         <p className="text-sm text-slate-500">{t("mySeminars", "Mis Seminarios")}</p>
-                        <p className="text-2xl font-bold">{isProfessor ? mySeminars.length : 0}</p>
+                        <p className="text-2xl font-bold">{isProfessor ? mySeminarsCount : 0}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -248,7 +367,7 @@ export default function Wallet() {
                       </div>
                       <div>
                         <p className="text-sm text-slate-500">{t("enrollments", "Inscripciones")}</p>
-                        <p className="text-2xl font-bold">{myEnrollments.length}</p>
+                        <p className="text-2xl font-bold">{myEnrollmentsCount}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -272,7 +391,6 @@ export default function Wallet() {
               </motion.div>
             </div>
 
-            {/* Transactions */}
             <Tabs defaultValue="all" className="w-full">
               <TabsList className="w-full bg-white border p-1 rounded-xl">
                 <TabsTrigger value="all" className="flex-1 rounded-lg">{t("all", "Todas")}</TabsTrigger>
@@ -285,18 +403,15 @@ export default function Wallet() {
               </TabsContent>
 
               <TabsContent value="income" className="mt-6">
-                <TransactionList
-                  transactions={transactions.filter((tx) => INCOME_TRANSACTION_TYPES.has(tx.type))}
-                />
+                <TransactionList transactions={transactions.filter((tx) => INCOME_TRANSACTION_TYPES.has(tx.type))} />
               </TabsContent>
 
               <TabsContent value="withdrawals" className="mt-6">
-                <TransactionList transactions={transactions.filter((t) => t.type === "withdrawal")} />
+                <TransactionList transactions={transactions.filter((tx) => tx.type === "withdrawal")} />
               </TabsContent>
             </Tabs>
           </div>
 
-          {/* Sidebar: Wallet card como Base44 (mini-cards) */}
           <div className="space-y-6 order-1 lg:order-2">
             {walletLoading ? (
               <div className="h-80 bg-white rounded-2xl animate-pulse" />
@@ -321,8 +436,7 @@ export default function Wallet() {
                     <p className="text-3xl font-bold">{money(wallet?.balance)}</p>
                   </div>
 
-                  {/* 3 mini-cards */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
+                  <div className="grid grid-cols-3 gap-2 sm:gap-3">
                     <div className="p-3 bg-white/10 rounded-xl text-center">
                       <p className="text-[10px] sm:text-[11px] text-amber-200/90 flex items-center justify-center gap-1">
                         <Clock className="h-3 w-3" /> {t("pending", "Pendiente")}
@@ -348,21 +462,33 @@ export default function Wallet() {
                   {heldReferralTotal > 0 ? (
                     <div className="rounded-xl border border-amber-300/20 bg-amber-400/10 p-3">
                       <p className="text-sm font-medium text-amber-100">
-                        {t("wallet_held_referrals", "Bonos retenidos")}
+                        {t("wallet_held_referrals", "Bonos ganados y retenidos")}
                       </p>
                       <p className="text-2xl font-bold text-white">{money(heldReferralTotal)}</p>
                       <p className="mt-1 text-xs text-white/70">
                         {t(
                           "wallet_held_referrals_help",
-                          "Se liberan cuando pagas tu inscripcion dentro de la ventana de pago."
+                          "Se generan por cada estudiante invitado por ti cuyo pago entra en el excedente del seminario. Solo se liberan si tu tambien pagaste tu propia inscripcion y el seminario finaliza correctamente."
                         )}
                       </p>
                     </div>
                   ) : null}
 
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+                    <p className="font-medium text-white">
+                      {t("preferred_payout_method", "Metodo de retiro preferido")}:{" "}
+                      <span className="text-white/80">{payoutSummaryLabel}</span>
+                    </p>
+                    <p className="mt-1 text-xs text-white/70 break-words">{payoutSummaryDestination}</p>
+                    {payoutMinimumLabel ? (
+                      <p className="mt-2 text-xs text-white/60">{payoutMinimumLabel}</p>
+                    ) : null}
+                  </div>
+
                   <Button
                     onClick={() => setShowWithdrawDialog(true)}
                     className="w-full bg-white text-slate-900 hover:bg-white/90"
+                    disabled={profileLoading}
                   >
                     {t("requestWithdrawal", "Solicitar retiro")}
                   </Button>
@@ -372,32 +498,71 @@ export default function Wallet() {
 
             <Card className="border-0 shadow-md">
               <CardHeader>
-                <CardTitle className="text-lg">{t("quickActions", "Acciones rápidas")}</CardTitle>
+                <CardTitle className="text-lg">{t("quickActions", "Acciones rapidas")}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {isProfessor && (
                     <Link to="/createseminar" className="block">
-                      <Button variant="outline" className="w-full justify-center sm:justify-start">
-                        <BookOpen className="h-4 w-4 mr-2" />
+                      <Button
+                        variant="outline"
+                        className="h-auto min-h-14 w-full items-start justify-start whitespace-normal break-words px-3 py-3 text-left text-sm"
+                      >
+                        <BookOpen className="h-4 w-4 shrink-0 mr-2 mt-0.5" />
                         {t("createSeminar", "Crear seminario")}
                       </Button>
                     </Link>
                   )}
                   <Link to="/my-seminars" className="block">
-                    <Button variant="outline" className="w-full justify-center sm:justify-start">
-                      <Users className="h-4 w-4 mr-2" />
+                    <Button
+                      variant="outline"
+                      className="h-auto min-h-14 w-full items-start justify-start whitespace-normal break-words px-3 py-3 text-left text-sm"
+                    >
+                      <Users className="h-4 w-4 shrink-0 mr-2 mt-0.5" />
                       {t("mySeminars", "Mis seminarios")}
                     </Button>
                   </Link>
+                  {showWalletSeminarAction ? (
+                    <Link to="/my-seminars?wallet_checkout=1" className="block">
+                      <Button
+                        variant="outline"
+                        className="h-auto min-h-14 w-full items-start justify-start whitespace-normal break-words px-3 py-3 text-left text-sm"
+                      >
+                        <WalletIcon className="h-4 w-4 shrink-0 mr-2 mt-0.5" />
+                        {t("wallet_go_to_payments", "Ir a mis pagos")}
+                      </Button>
+                    </Link>
+                  ) : null}
+                  <Link to="/profile" className="block">
+                    <Button
+                      variant="outline"
+                      className="h-auto min-h-14 w-full items-start justify-start whitespace-normal break-words px-3 py-3 text-left text-sm"
+                    >
+                      <Download className="h-4 w-4 shrink-0 mr-2 mt-0.5" />
+                      {t("wallet_configure_payout", "Configurar retiro")}
+                    </Button>
+                  </Link>
                 </div>
+                {showWalletSeminarAction ? (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                    {t(
+                      "okalab_wallet_usage_help",
+                      "Tu Saldo Okalab puede usarse desde USD 0.10 para pagar seminarios dentro de la plataforma."
+                    )}
+                    <p className="mt-2 text-xs text-slate-500">
+                      {t(
+                        "wallet_usage_flow_help",
+                        "Este atajo te lleva a Mis seminarios y, si tienes un pago pendiente abierto, te dirige al checkout con tu saldo preparado."
+                      )}
+                    </p>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           </div>
         </div>
       </div>
 
-      {/* Withdraw Dialog */}
       <Dialog open={showWithdrawDialog} onOpenChange={setShowWithdrawDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -408,6 +573,19 @@ export default function Wallet() {
             <div className="p-4 bg-slate-50 rounded-xl">
               <p className="text-sm text-slate-500">{t("availableBalance", "Balance disponible")}</p>
               <p className="text-2xl font-bold">{money(wallet?.balance)}</p>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              <p>
+                <span className="font-medium text-slate-900">
+                  {t("preferred_payout_method", "Metodo de retiro preferido")}:
+                </span>{" "}
+                {payoutSummaryLabel}
+              </p>
+              <p className="mt-1 break-words">{payoutSummaryDestination}</p>
+              {payoutMinimumLabel ? (
+                <p className="mt-2 text-xs text-slate-500">{payoutMinimumLabel}</p>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -424,6 +602,33 @@ export default function Wallet() {
                 />
               </div>
             </div>
+
+            {profileLoading ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                {t("admin_loading_profile", "Cargando perfil...")}
+              </div>
+            ) : null}
+
+            {!profileLoading && !payoutProfileState.isComplete ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                {t(
+                  "payout_profile_incomplete_error",
+                  "Completa tu metodo de retiro y tu pais de residencia antes de solicitar un retiro externo."
+                )}
+              </div>
+            ) : null}
+
+            {!profileLoading &&
+            payoutProfileState.isComplete &&
+            Number(withdrawAmount || 0) > 0 &&
+            Number(withdrawAmount || 0) < Number(payoutMinimum || 0) ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                {t(
+                  "payout_minimum_warning",
+                  "Este metodo requiere un minimo de retiro de USD {amount}."
+                ).replace("{amount}", Number(payoutMinimum || 0).toFixed(2))}
+              </div>
+            ) : null}
           </div>
 
           <DialogFooter>
@@ -432,7 +637,15 @@ export default function Wallet() {
             </Button>
             <Button
               onClick={() => withdrawMutation.mutate()}
-              disabled={!withdrawAmount || Number(withdrawAmount) <= 0 || withdrawMutation.isPending}
+              disabled={
+                profileLoading ||
+                !withdrawAmount ||
+                Number(withdrawAmount) <= 0 ||
+                Number(withdrawAmount) > Number(wallet?.balance || 0) ||
+                withdrawMutation.isPending ||
+                !payoutProfileState.isComplete ||
+                Number(withdrawAmount) < Number(payoutMinimum || 0)
+              }
               className="bg-slate-900 hover:bg-slate-800"
             >
               {withdrawMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}

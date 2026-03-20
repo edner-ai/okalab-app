@@ -40,13 +40,13 @@ export default function AdminTransactions() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return transactions;
-    return transactions.filter((t) => {
+    return transactions.filter((tx) => {
       const haystack = [
-        t.wallet_id || "",
-        t.user_email || "",
-        t.type || "",
-        t.seminar_id || "",
-        t.description || "",
+        tx.wallet_id || "",
+        tx.user_email || "",
+        tx.type || "",
+        tx.seminar_id || "",
+        tx.description || "",
       ]
         .join(" ")
         .toLowerCase();
@@ -104,24 +104,24 @@ export default function AdminTransactions() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((t) => (
-                  <TableRow key={t.id}>
+                {filtered.map((tx) => (
+                  <TableRow key={tx.id}>
                     <TableCell className="truncate max-w-[160px]">
-                      {t.wallet_id || "-"}
+                      {tx.wallet_id || "-"}
                     </TableCell>
                     <TableCell className="truncate max-w-[200px]">
-                      {t.user_email || "-"}
+                      {tx.user_email || "-"}
                     </TableCell>
-                    <TableCell>{t.type || "-"}</TableCell>
-                    <TableCell>{t.status === "held" ? "Retenido" : (t.status || "-")}</TableCell>
-                    <TableCell>{money(t.amount)}</TableCell>
+                    <TableCell>{t(tx.type, tx.type || "-")}</TableCell>
+                    <TableCell>{tx.status === "held" ? "Retenido" : (tx.status || "-")}</TableCell>
+                    <TableCell>{money(tx.amount)}</TableCell>
                     <TableCell className="truncate max-w-[160px]">
-                      {t.seminar_id || "-"}
+                      {tx.seminar_id || "-"}
                     </TableCell>
                     <TableCell className="truncate max-w-[220px]">
-                      {t.description || "-"}
+                      {tx.description || "-"}
                     </TableCell>
-                    <TableCell>{fmtDate(t.created_at)}</TableCell>
+                    <TableCell>{fmtDate(tx.created_at)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
