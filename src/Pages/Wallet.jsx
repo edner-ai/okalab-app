@@ -468,7 +468,7 @@ export default function Wallet() {
                       <p className="mt-1 text-xs text-white/70">
                         {t(
                           "wallet_held_referrals_help",
-                          "Se generan por cada estudiante invitado por ti cuyo pago entra en el excedente del seminario. Solo se liberan si tu tambien pagaste tu propia inscripcion y el seminario finaliza correctamente."
+                          "Se calculan al cerrar la ventana de pago segun el orden de inscripcion de estudiantes pagados que quedaron realmente en excedente y fueron atribuidos a tu enlace. Solo se liberan si tu tambien pagaste tu propia inscripcion y el seminario finaliza correctamente."
                         )}
                       </p>
                     </div>

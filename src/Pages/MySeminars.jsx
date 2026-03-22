@@ -253,6 +253,50 @@ export default function MySeminars() {
     staleTime: 1000 * 60 * 5,
   });
 
+  const formatPaymentWindowDate = (value) =>
+    value ? format(value, "PPP", { locale: dateLocale }) : "—";
+
+  const getCompletionGate = (seminar) => {
+    if (!seminar?.id || !canMarkSeminarCompleted(seminar?.status)) {
+      return {
+        allowed: false,
+        reason: t("complete_seminar_unavailable", "Este seminario no se puede marcar como completado."),
+      };
+    }
+
+    if (!paymentWindowSettings) {
+      return {
+        allowed: false,
+        reason: t(
+          "complete_seminar_loading_payment_window",
+          "Cargando la ventana de pago antes de permitir el cierre del seminario."
+        ),
+      };
+    }
+
+    const paymentWindow = resolvePaymentWindow({
+      seminarStartDate: seminar.start_date,
+      settings: paymentWindowSettings,
+    });
+
+    if (paymentWindow.isPaymentWindowClosed) {
+      return {
+        allowed: true,
+        reason: "",
+        paymentWindow,
+      };
+    }
+
+    return {
+      allowed: false,
+      reason: t(
+        "complete_seminar_payment_window_open_error",
+        "Podrás marcar este seminario como completado cuando cierre la ventana de pago el {close}."
+      ).replace("{close}", formatPaymentWindowDate(paymentWindow.paymentCloseDate)),
+      paymentWindow,
+    };
+  };
+
   const enrollmentBySeminarId = useMemo(() => {
     const map = new Map();
     for (const e of myEnrollments) {
@@ -381,7 +425,11 @@ export default function MySeminars() {
   });
 
   const requestMarkCompleted = (seminar) => {
-    if (!seminar?.id || !canMarkSeminarCompleted(seminar?.status)) return;
+    const gate = getCompletionGate(seminar);
+    if (!gate.allowed) {
+      toast.error(gate.reason);
+      return;
+    }
     setSeminarPendingCompletion(seminar);
   };
 
@@ -867,6 +915,7 @@ export default function MySeminars() {
     const seminarEnrollments = enrollmentsForCreated.filter((e) => e.seminar_id === selectedSeminar.id);
     const enrollmentCount = seminarEnrollments.length;
     const totalCollected = getTotalCollected(selectedSeminar.id);
+    const selectedSeminarCompletionGate = getCompletionGate(selectedSeminar);
 
     return (
       <div className="min-h-screen bg-slate-50 py-8">
@@ -898,7 +947,8 @@ export default function MySeminars() {
                         size="sm"
                         className="w-full justify-start bg-emerald-600 hover:bg-emerald-700 sm:justify-center"
                         onClick={() => requestMarkCompleted(selectedSeminar)}
-                        disabled={updateStatusMutation.isPending}
+                        disabled={updateStatusMutation.isPending || !selectedSeminarCompletionGate.allowed}
+                        title={!selectedSeminarCompletionGate.allowed ? selectedSeminarCompletionGate.reason : undefined}
                       >
                         {updateStatusMutation.isPending ? (
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -934,6 +984,11 @@ export default function MySeminars() {
                     </Button>
                   </div>
                 </div>
+                {canMarkSeminarCompleted(selectedSeminar.status) && !selectedSeminarCompletionGate.allowed ? (
+                  <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                    {selectedSeminarCompletionGate.reason}
+                  </p>
+                ) : null}
               </CardHeader>
             </Card>
 
@@ -1314,6 +1369,7 @@ export default function MySeminars() {
               {searchedSeminars.map((seminar, index) => {
                 const enrollmentCount = getEnrollmentCount(seminar.id);
                 const totalCollected = getTotalCollected(seminar.id);
+                const seminarCompletionGate = getCompletionGate(seminar);
 
                 return (
                   <motion.div
@@ -1378,6 +1434,7 @@ export default function MySeminars() {
                                   {canMarkSeminarCompleted(seminar.status) && (
                                     <DropdownMenuItem
                                       onClick={() => requestMarkCompleted(seminar)}
+                                      title={!seminarCompletionGate.allowed ? seminarCompletionGate.reason : undefined}
                                     >
                                       <CheckCircle2 className="h-4 w-4 mr-2" />
                                       {t("complete_seminar", "Marcar como completado")}

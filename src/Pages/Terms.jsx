@@ -42,7 +42,7 @@ const sections = [
   {
     title: "8. Referidos, bonos y liberacion",
     body:
-      "Los bonos por referidos solo nacen sobre pagos excedentes atribuibles a estudiantes invitados por el referidor. Okalab solo puede liberarlos si el referidor tambien pago su propia inscripcion dentro de la ventana de pago y si el seminario asociado finaliza correctamente. Si esas condiciones no se cumplen o no hay un referido valido atribuible, ese valor vuelve al profesor y a la plataforma segun las reglas economicas activas.",
+      "Los bonos por referidos solo nacen cuando Okalab liquida el excedente al cerrar la ventana de pago, toma en cuenta unicamente las inscripciones pagadas y respeta su orden de inscripcion para determinar que estudiantes quedaron realmente en excedente y cuales son atribuibles al enlace del referidor. Okalab solo puede liberarlos si el referidor tambien pago su propia inscripcion dentro de la ventana de pago y si el seminario asociado finaliza correctamente. Si esas condiciones no se cumplen o no hay un referido valido atribuible, ese valor vuelve al profesor y a la plataforma segun las reglas economicas activas.",
   },
   {
     title: "9. Retiros externos y metodos por pais",

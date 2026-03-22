@@ -54,7 +54,7 @@ export default function AdminOverview() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">{t("admin_overview", "Overview")}</h1>
-        <p className="text-slate-600 mt-1">{t("admin_overview_subtitle", "Backoffice snapshot.")}</p>
+        <p className="text-slate-600 mt-1">{t("admin_overview_subtitle", "Resumen del backoffice.")}</p>
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">

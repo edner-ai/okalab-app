@@ -102,10 +102,11 @@ export default function EconomicsExplainer({ seminar, enrollmentCount }) {
              <span className="font-mono text-slate-700">${platformFee.toFixed(2)}</span>
           </div>
           <p className="text-[9px] text-slate-400 pt-1 border-t border-black/5 mt-1">
-            {t('economics_note', '* Los cálculos se actualizan en tiempo real con cada inscripción.')}
+            {t('economics_note', '* La estimacion puede cambiar durante la ventana de pago. La liquidacion economica final se congela al cerrar esa ventana.')}
           </p>
         </div>
       </div>
     </Card>
   );
 }
+

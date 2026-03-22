@@ -73,7 +73,7 @@ export default function AdminEnrollments() {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{t("admin_enrollment", "Enrollment")}</h1>
-          <p className="text-slate-500 text-sm">{t("admin_enrollment_subtitle", "Manage enrollments")}</p>
+          <p className="text-slate-500 text-sm">{t("admin_enrollment_subtitle", "Administrar inscripciones")}</p>
         </div>
       </div>
 
@@ -99,7 +99,7 @@ export default function AdminEnrollments() {
           {isLoading ? (
             <div className="flex items-center gap-2 text-slate-500 text-sm py-8">
               <Loader2 className="h-4 w-4 animate-spin" />
-              {t("admin_loading_enrollments", "Loading enrollments...")}
+              {t("admin_loading_enrollments", "Cargando inscripciones...")}
             </div>
           ) : filtered.length === 0 ? (
             <div className="text-slate-500 text-sm py-10 text-center">
@@ -115,7 +115,7 @@ export default function AdminEnrollments() {
                   <TableHead>{t("admin_payment_status", "Payment")}</TableHead>
                   <TableHead>{t("payment_method", "Método de pago")}</TableHead>
                   <TableHead>{t("common_amount", "Amount")}</TableHead>
-                  <TableHead>{t("admin_referred_by", "Referred By")}</TableHead>
+                  <TableHead>{t("admin_referred_by", "Referido por")}</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>

@@ -183,7 +183,7 @@ export default function AdminUsers() {
             className="bg-slate-900 hover:bg-slate-800"
             onClick={() => setInviteOpen(true)}
           >
-            {t("admin_invite_user", "Invite User")}
+            {t("admin_invite_user", "Invitar usuario")}
           </Button>
         </div>
       </div>
@@ -324,7 +324,7 @@ export default function AdminUsers() {
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{t("admin_invite_user", "Invite User")}</DialogTitle>
+            <DialogTitle>{t("admin_invite_user", "Invitar usuario")}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-3">

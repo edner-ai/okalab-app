@@ -201,7 +201,7 @@ export default function Support() {
       ),
       answer: t(
         "support_faq_referrals_a",
-        "Comparte tu enlace de invitacion. Si el pago de un estudiante invitado por ti entra en el excedente del seminario, tu bono puede quedar retenido a tu nombre. Solo se libera si tu tambien pagaste tu propia inscripcion dentro de la ventana de pago y cuando el seminario finaliza correctamente. Si no cumples esa condicion, ese valor vuelve a profesor y plataforma segun las reglas activas. Luego puedes usarlo dentro de Okalab o solicitar retiro externo si cumples el minimo del metodo."
+        "Comparte tu enlace de invitacion. Al cerrar la ventana de pago, Okalab toma las inscripciones pagadas, respeta su orden de inscripcion y calcula cuales quedaron en el excedente y cuales son realmente atribuibles a tu enlace. Solo esos generan bono retenido a tu nombre. Ese bono solo se libera si tu tambien pagaste tu propia inscripcion dentro de la ventana de pago y cuando el seminario finaliza correctamente. Si no cumples esa condicion o no hay un referido valido atribuible, ese valor vuelve a profesor y plataforma segun las reglas activas. Luego puedes usarlo dentro de Okalab o solicitar retiro externo si cumples el minimo del metodo."
       ),
     },
     {

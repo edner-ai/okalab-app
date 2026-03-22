@@ -45,6 +45,7 @@ import { getDateFnsLocale } from "../utils/dateLocale";
 import { resolvePaymentWindow } from "../utils/paymentWindow";
 import { parseDateValue } from "../utils/dateValue";
 import { buildContactOnboardingUrl } from "../utils/contactProfile";
+import EconomicConditionsDrawer from "../Components/seminars/EconomicConditionsDrawer";
 import {
   getMeetingLinkPlaceholder,
   getVideoConferencePlatformOptions,
@@ -129,6 +130,7 @@ export default function CreateSeminar() {
 
   const [uploading, setUploading] = useState(false);
   const [loadingSeminar, setLoadingSeminar] = useState(false);
+  const [economicConditionsOpen, setEconomicConditionsOpen] = useState(false);
   const settingsAppliedRef = useRef(false);
   const languageTouchedRef = useRef(false);
   const loadedSeminarIdRef = useRef(null);
@@ -1531,8 +1533,20 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
 
                   <div className="p-3 bg-emerald-500/20 rounded-lg">
                     <p className="text-xs text-white/90">
-                      {t("surplusExplanation", "💡 Si el total recaudado supera tu objetivo, {percent}% del excedente neto es para ti como bonus. El resto solo se asigna a invitadores validos de los estudiantes excedentes; si no aplica un referido valido, vuelve a profesor y plataforma.")
-                          .replace("{percent}", formData.professor_bonus_percent ?? 0)}
+                      {t(
+                        "surplusExplanation",
+                        "Si el total recaudado supera tu objetivo, {percent}% del excedente neto es para ti como bonus."
+                      )
+                        .replace("{percent}", formData.professor_bonus_percent ?? 0)}{" "}
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        className="inline h-auto p-0 align-baseline text-white underline underline-offset-4 hover:text-white/80"
+                        onClick={() => setEconomicConditionsOpen(true)}
+                      >
+                        {t("economic_conditions_inline_cta", "Condiciones aplican.")}
+                      </Button>
                     </p>
                   </div>
 
@@ -1544,6 +1558,11 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                 </CardContent>
               </Card>
             </motion.div>
+            <EconomicConditionsDrawer
+              open={economicConditionsOpen}
+              onOpenChange={setEconomicConditionsOpen}
+              professorBonusPercent={formData.professor_bonus_percent ?? 0}
+            />
 
             <div className="space-y-3">
               <Button

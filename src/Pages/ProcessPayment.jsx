@@ -1001,7 +1001,7 @@ export default function ProcessPayment() {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">{t("payment_title", "Pago")}</h1>
             <p className="text-slate-500 text-sm">
-              {t("payment_deferred_note", "Pago diferido: el precio se calcula al pagar y el excedente se distribuye automáticamente.")}
+              {t("payment_deferred_note", "Pago diferido: el precio se calcula al pagar y la distribucion final del excedente se liquida al cerrar la ventana de pago.")}
             </p>
           </div>
         </div>

@@ -16,6 +16,23 @@ import { Loader2, Plus, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 const LANGS = ["es", "en", "fr", "ht"];
+const REVIEWABLE_CODE_UPDATE_KEYS = new Set([
+  "surplusExplanation",
+  "economic_conditions_inline_cta",
+  "economic_conditions_professor_body",
+  "economic_conditions_referrals_intro",
+  "economic_conditions_referrals_rule_paid",
+  "economic_conditions_referrals_rule_surplus",
+  "economic_conditions_referrals_rule_release",
+  "economic_conditions_referrals_rule_fallback",
+  "economics_note",
+  "payment_deferred_note",
+  "support_faq_payment_a",
+  "support_faq_referrals_a",
+  "wallet_held_referrals",
+  "wallet_held_referrals_help",
+  "complete_seminar_payment_window_open_error",
+]);
 
 function normalizeTranslationValue(value) {
   return String(value || "").trim();
@@ -104,10 +121,28 @@ function getCodeBaseSpanish(row, codeSeedMap) {
   return normalizeTranslationValue(codeSeedMap.get(row?.key)?.es);
 }
 
+function hasTrustedCodeBaseSpanish(row, codeSeedMap) {
+  const codeEs = getCodeBaseSpanish(row, codeSeedMap);
+  const currentEs = normalizeTranslationValue(row?.es);
+  const currentEn = normalizeTranslationValue(row?.en);
+
+  if (!codeEs.length) return false;
+
+  // Some legacy seed entries stored the English fallback as the Spanish base.
+  // If the supposed code-base ES matches EN while BO already has a different ES,
+  // treat it as an untrusted source instead of a real pending update.
+  if (currentEn.length > 0 && codeEs === currentEn && currentEs !== currentEn) {
+    return false;
+  }
+
+  return true;
+}
+
 function isRowOutdated(row, codeSeedMap) {
+  if (!REVIEWABLE_CODE_UPDATE_KEYS.has(row?.key)) return false;
   const currentEs = normalizeTranslationValue(row?.es);
   const codeEs = getCodeBaseSpanish(row, codeSeedMap);
-  return currentEs.length > 0 && codeEs.length > 0 && currentEs !== codeEs;
+  return hasTrustedCodeBaseSpanish(row, codeSeedMap) && currentEs.length > 0 && currentEs !== codeEs;
 }
 
 function detectDelimiter(text) {
