@@ -36,6 +36,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../Components/ui/tabs";
 import StarRating from "../Components/reviews/StarRating";
 import PaymentWindowCountdown from "../Components/seminars/PaymentWindowCountdown";
+import LocationInfo from "../Components/seminars/LocationInfo";
 
 import {
   Calendar,
@@ -195,10 +196,15 @@ export default function SeminarDetails() {
 
   const maxStudents = Number(seminar?.max_students || 0);
   const isFull = Number.isFinite(maxStudents) && maxStudents > 0 && enrollmentCount >= maxStudents;
+  const seminarStartDate = useMemo(() => {
+    if (!seminar?.start_date) return null;
+    return parseDateValue(seminar.start_date);
+  }, [seminar?.start_date]);
   const seminarEndDate = useMemo(() => {
     if (!seminar?.end_date) return null;
     return parseDateValue(seminar.end_date, { endOfDay: true });
   }, [seminar?.end_date]);
+  const hasStarted = !!seminarStartDate && new Date() >= seminarStartDate;
   const isEnded = !!seminarEndDate && new Date() > seminarEndDate;
 
   const { data: ratingRows = [] } = useQuery({
@@ -458,6 +464,13 @@ const minPriceGoalText = useMemo(() => {
 const payStatus = (userEnrollment?.payment_status || userEnrollment?.status || "").toLowerCase();
 // ÚNICA FUENTE de pago: payment_status. Estados pagables: unpaid / rejected
 const isPayableStatus = payStatus === "unpaid" || payStatus === "rejected";
+const isEnrollmentPaid = payStatus === "paid";
+const materialsAccessMode = seminar?.materials_access_mode || "start_date";
+const materialsReleasedForPaidStudents =
+  materialsAccessMode === "after_payment" || hasStarted;
+const canAccessMaterials =
+  isOwnerProfessor || isAdmin || (!!userEnrollment && isEnrollmentPaid && materialsReleasedForPaidStudents);
+const canRequestMaterials = !!seminarId;
 const showPayButton = !!userEnrollment && isPayableStatus && canPayNow;
 const payableAmount = Number(userEnrollment?.final_price ?? estimatedPriceNow ?? 0);
 const showUpcomingPayButton =
@@ -470,6 +483,43 @@ const showClosedPayState = !!userEnrollment && isPayableStatus && isPaymentWindo
 
 const showDecisionBlock =
   !!userEnrollment && isPayableStatus && canPayNow && !targetReached;
+
+const { data: seminarMaterials = [], isLoading: materialsLoading } = useQuery({
+  queryKey: ["seminar-materials", seminarId, user?.id || "anon", materialsAccessMode, hasStarted],
+  enabled: canRequestMaterials,
+  queryFn: async () => {
+    const { data, error } = await supabase.rpc("get_accessible_seminar_materials", {
+      p_seminar_id: seminarId,
+    });
+
+    if (error) throw error;
+
+    const normalized = normalizeSeminarMaterials(data || []);
+
+    return Promise.all(
+      normalized.map(async (material) => {
+        if (material.type !== "file" || !material.bucket || !material.path) {
+          return material;
+        }
+
+        const { data: signedData, error: signedError } = await supabase.storage
+          .from(material.bucket)
+          .createSignedUrl(material.path, 60 * 60);
+
+        if (signedError) {
+          console.warn("signed seminar material error", signedError?.message || signedError);
+          return material;
+        }
+
+        return {
+          ...material,
+          url: signedData?.signedUrl || material.url,
+        };
+      })
+    );
+  },
+  staleTime: 1000 * 60 * 5,
+});
 
   // Bloque “modelo económico” como Base44
   const platformFee = targetIncome * (platformFeePercent / 100);
@@ -669,7 +719,6 @@ if (error) {
   const fallbackHeroImage = `${assetBase}assets/hero.webp`;
   const seminarCover = normalizeSeminarCover(seminar, fallbackHeroImage);
   const heroImageSrc = seminarCover.imageSrc;
-  const seminarMaterials = normalizeSeminarMaterials(seminar?.materials || []);
 
   if (isLoading) {
     return (
@@ -845,50 +894,117 @@ if (error) {
               <TabsContent value="materials" className="mt-6">
                 <Card className="border-0 shadow-md">
                   <CardContent className="p-6">
-                    {seminarMaterials.length > 0 ? (
+                    {materialsLoading ? (
+                      <div className="flex items-center justify-center py-12">
+                        <div className="w-10 h-10 border-4 border-slate-200 border-t-slate-900 rounded-full animate-spin" />
+                      </div>
+                    ) : seminarMaterials.length > 0 ? (
                       <div className="space-y-3">
-                        {seminarMaterials.map((material) => (
-                          <a
-                            key={material.id}
-                            href={material.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors"
-                          >
-                            <div className="p-2 bg-white rounded-lg">
-                              {material.type === "youtube" ? (
-                                <Video className="h-5 w-5 text-purple-600" />
-                              ) : material.type === "link" ? (
-                                <ExternalLink className="h-5 w-5 text-emerald-600" />
+                        {seminarMaterials.map((material) =>
+                          material.url ? (
+                            <a
+                              key={material.id}
+                              href={material.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors"
+                            >
+                              <div className="p-2 bg-white rounded-lg">
+                                {material.type === "youtube" ? (
+                                  <Video className="h-5 w-5 text-purple-600" />
+                                ) : material.type === "link" ? (
+                                  <ExternalLink className="h-5 w-5 text-emerald-600" />
+                                ) : (
+                                  <FileText className="h-5 w-5 text-blue-600" />
+                                )}
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="font-medium text-slate-900">{material.title}</p>
+                                  {material.isPreviewPublic ? (
+                                    <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                                      {t("material_preview_public_badge", "Vista previa")}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p className="text-sm text-slate-500">
+                                  {material.type === "youtube"
+                                    ? t("seminar_cover_youtube", "Video YouTube")
+                                    : material.type === "link"
+                                      ? t("open_link", "Abrir enlace")
+                                      : t("download", "Descargar")}
+                                </p>
+                              </div>
+                              {material.type === "file" ? (
+                                <Download className="h-5 w-5 text-slate-400" />
                               ) : (
-                                <FileText className="h-5 w-5 text-blue-600" />
+                                <ExternalLink className="h-5 w-5 text-slate-400" />
                               )}
+                            </a>
+                          ) : (
+                            <div
+                              key={material.id}
+                              className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl"
+                            >
+                              <div className="p-2 bg-white rounded-lg">
+                                <FileText className="h-5 w-5 text-blue-600" />
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="font-medium text-slate-900">{material.title}</p>
+                                  {material.isPreviewPublic ? (
+                                    <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                                      {t("material_preview_public_badge", "Vista previa")}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p className="text-sm text-slate-500">
+                                  {t(
+                                    "materials_link_unavailable",
+                                    "Este archivo se habilitará cuando tu acceso quede confirmado."
+                                  )}
+                                </p>
+                              </div>
                             </div>
-                            <div className="flex-1">
-                              <p className="font-medium text-slate-900">{material.title}</p>
-                              <p className="text-sm text-slate-500">
-                                {material.type === "youtube"
-                                  ? t("seminar_cover_youtube", "Video YouTube")
-                                  : material.type === "link"
-                                    ? t("open_link", "Abrir enlace")
-                                    : t("download", "Descargar")}
-                              </p>
-                            </div>
-                            {material.type === "file" ? (
-                              <Download className="h-5 w-5 text-slate-400" />
-                            ) : (
-                              <ExternalLink className="h-5 w-5 text-slate-400" />
+                          )
+                        )}
+                        {!canAccessMaterials ? (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            {t(
+                              "materials_preview_note",
+                              "Estos materiales se comparten antes del pago. Si el profesor añadió otros materiales privados, se desbloquean según las reglas del seminario."
                             )}
-                          </a>
-                        ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : canAccessMaterials ? (
+                      <div className="text-center py-12">
+                        <FileText className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+                        <p className="text-slate-500">
+                          {t(
+                            "materials_empty_private",
+                            "El profesor aun no ha cargado materiales para este seminario."
+                          )}
+                        </p>
                       </div>
                     ) : (
                       <div className="text-center py-12">
                         <FileText className="h-12 w-12 text-slate-300 mx-auto mb-4" />
                         <p className="text-slate-500">
-                          {userEnrollment
-                            ? t("materials_coming_soon", "Los materiales estarán disponibles próximamente")
-                            : t("materials_enroll_to_access", "Inscríbete para acceder a los materiales")}
+                          {!!userEnrollment && !isEnrollmentPaid
+                            ? t(
+                                "materials_payment_required",
+                                "Tu pago debe estar aprobado para acceder a los materiales."
+                              )
+                            : !!userEnrollment && isEnrollmentPaid && !materialsReleasedForPaidStudents
+                              ? t(
+                                  "materials_start_date_locked",
+                                  "Los materiales se habilitan en la fecha de inicio del seminario."
+                                )
+                              : t(
+                                  "materials_enroll_and_pay_to_access",
+                                  "Inscribete y paga para acceder a los materiales."
+                                )}
                         </p>
                       </div>
                     )}
@@ -900,6 +1016,10 @@ if (error) {
 
           {/* Sidebar (igual Base44 estructura) */}
           <div className="space-y-6">
+            {(seminar.modality === "presential" || seminar.modality === "hybrid") ? (
+              <LocationInfo seminar={seminar} />
+            ) : null}
+
             {/* Video Conference Info (solo si hay datos; visible a inscritos o al profesor/admin) */}
             {(seminar.modality === "online" || seminar.modality === "hybrid") && (() => {
               const hasVC = !!(seminar.video_conference_link || seminar.video_conference_id || seminar.video_conference_password);

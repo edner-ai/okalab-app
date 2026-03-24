@@ -16,23 +16,6 @@ import { Loader2, Plus, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 const LANGS = ["es", "en", "fr", "ht"];
-const REVIEWABLE_CODE_UPDATE_KEYS = new Set([
-  "surplusExplanation",
-  "economic_conditions_inline_cta",
-  "economic_conditions_professor_body",
-  "economic_conditions_referrals_intro",
-  "economic_conditions_referrals_rule_paid",
-  "economic_conditions_referrals_rule_surplus",
-  "economic_conditions_referrals_rule_release",
-  "economic_conditions_referrals_rule_fallback",
-  "economics_note",
-  "payment_deferred_note",
-  "support_faq_payment_a",
-  "support_faq_referrals_a",
-  "wallet_held_referrals",
-  "wallet_held_referrals_help",
-  "complete_seminar_payment_window_open_error",
-]);
 
 function normalizeTranslationValue(value) {
   return String(value || "").trim();
@@ -97,11 +80,27 @@ function buildSeedRowsFromCode() {
 
   return Array.from(keys).map((key) => ({
     key,
-    es: CODE_TRANSLATION_SEED?.[key] ?? DEFAULT_TRANSLATIONS?.es?.[key] ?? null,
+    es: resolveCodeBaseSpanish(key) || null,
     en: DEFAULT_TRANSLATIONS?.en?.[key] ?? null,
     fr: DEFAULT_TRANSLATIONS?.fr?.[key] ?? null,
     ht: DEFAULT_TRANSLATIONS?.ht?.[key] ?? null,
   }));
+}
+
+function resolveCodeBaseSpanish(key) {
+  const codeEs = normalizeTranslationValue(CODE_TRANSLATION_SEED?.[key]);
+  const defaultEs = normalizeTranslationValue(DEFAULT_TRANSLATIONS?.es?.[key]);
+  const defaultEn = normalizeTranslationValue(DEFAULT_TRANSLATIONS?.en?.[key]);
+
+  if (!codeEs.length) return defaultEs;
+
+  // Legacy seed data may store the EN fallback in the ES slot.
+  // Prefer the runtime ES default when that happens.
+  if (defaultEn.length > 0 && codeEs === defaultEn && defaultEs.length > 0 && defaultEs !== defaultEn) {
+    return defaultEs;
+  }
+
+  return codeEs || defaultEs;
 }
 
 function mergeSeedWithExisting(existingRows, seedRows) {
@@ -139,7 +138,6 @@ function hasTrustedCodeBaseSpanish(row, codeSeedMap) {
 }
 
 function isRowOutdated(row, codeSeedMap) {
-  if (!REVIEWABLE_CODE_UPDATE_KEYS.has(row?.key)) return false;
   const currentEs = normalizeTranslationValue(row?.es);
   const codeEs = getCodeBaseSpanish(row, codeSeedMap);
   return hasTrustedCodeBaseSpanish(row, codeSeedMap) && currentEs.length > 0 && currentEs !== codeEs;

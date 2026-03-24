@@ -109,6 +109,7 @@ export function normalizeSeminarMaterial(material, index = 0) {
     mimeType: material.mime_type || "",
     bucket: material.bucket || "",
     path: material.path || "",
+    isPreviewPublic: Boolean(material.is_preview_public ?? material.isPreviewPublic),
   };
 }
 

@@ -15,6 +15,7 @@ import { Button } from "../Components/ui/button";
 import { Input } from "../Components/ui/input";
 import { Textarea } from "../Components/ui/textarea";
 import { Label } from "../Components/ui/label";
+import { Switch } from "../Components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "../Components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../Components/ui/select";
 import { Calendar } from "../Components/ui/calendar";
@@ -164,6 +165,7 @@ max_students: "",
     video_conference_id: "",
     video_conference_password: "",
     has_certificate: false,
+    materials_access_mode: "start_date",
     platform_fee_percent: Number(import.meta.env.VITE_DEFAULT_PLATFORM_FEE_PERCENT || 15),
     professor_bonus_percent: 30,
   });
@@ -171,6 +173,7 @@ max_students: "",
     type: "file",
     title: "",
     url: "",
+    is_preview_public: false,
   });
 
   // Cargar seminario en modo edición (?edit=<id>)
@@ -191,6 +194,13 @@ max_students: "",
           .single();
 
         if (error) throw error;
+        const { data: materialRows, error: materialsError } = await supabase
+          .from("seminar_materials")
+          .select("*")
+          .eq("seminar_id", editId)
+          .order("sort_order", { ascending: true });
+
+        if (materialsError) throw materialsError;
         if (cancelled) return;
 
         setFormData((prev) => ({
@@ -202,7 +212,21 @@ max_students: "",
           cover_video_url: data.cover_video_url || "",
           cover_video_provider: data.cover_video_provider || "",
           cover_video_id: data.cover_video_id || "",
-          materials: normalizeSeminarMaterials(data.materials || prev.materials || []),
+          materials_access_mode: data.materials_access_mode || "start_date",
+              materials: normalizeSeminarMaterials(
+                (materialRows || []).map((material) => ({
+                  id: material.id,
+                  title: material.title,
+                  description: material.description || "",
+                  type: material.material_type,
+                  url: material.external_url || "",
+                  youtube_video_id: material.youtube_video_id || "",
+                  mime_type: material.mime_type || "",
+                  bucket: material.bucket || "",
+                  path: material.storage_path || "",
+                  is_preview_public: material.is_preview_public,
+                }))
+              ),
         }));
         loadedSeminarIdRef.current = editId;
       } catch (err) {
@@ -453,6 +477,7 @@ max_students: "",
         mime_type: file.type || "application/octet-stream",
         size_bytes: file.size,
         type: "file",
+        is_preview_public: !!materialDraft.is_preview_public,
       };
 
       appendMaterial(material);
@@ -483,8 +508,9 @@ max_students: "",
         type: "youtube",
         url: buildYouTubeWatchUrl(videoId),
         youtube_video_id: videoId,
+        is_preview_public: !!materialDraft.is_preview_public,
       });
-      setMaterialDraft({ type: "youtube", title: "", url: "" });
+      setMaterialDraft((prev) => ({ ...prev, type: "youtube", title: "", url: "" }));
       return;
     }
 
@@ -496,32 +522,56 @@ max_students: "",
           title: title || normalized.hostname,
           type: "link",
           url: normalized.toString(),
+          is_preview_public: !!materialDraft.is_preview_public,
         });
-        setMaterialDraft({ type: "link", title: "", url: "" });
+        setMaterialDraft((prev) => ({ ...prev, type: "link", title: "", url: "" }));
       } catch {
         toast.error(t("material_link_invalid", "Ingresa un enlace válido."));
       }
     }
   };
 
-  const buildStoredMaterials = (materials) =>
-    normalizeSeminarMaterials(materials).map((material) => ({
-      id: material.id,
+  const buildSeminarMaterialRows = (seminarId, materials) =>
+    normalizeSeminarMaterials(materials).map((material, index) => ({
+      seminar_id: seminarId,
       title: material.title,
-      name: material.title,
-      type: material.type,
-      url: material.url,
+      description: material.description || null,
+      material_type: material.type,
+      external_url: material.type === "file" ? null : material.url || null,
       youtube_video_id: material.youtubeVideoId || null,
       mime_type: material.mimeType || null,
       bucket: material.bucket || null,
-      path: material.path || null,
-      description: material.description || null,
+      storage_path: material.path || null,
+      is_preview_public: !!material.isPreviewPublic,
+      sort_order: index,
     }));
+
+  const syncSeminarMaterials = async (seminarId, materials) => {
+    const { error: deleteError } = await supabase
+      .from("seminar_materials")
+      .delete()
+      .eq("seminar_id", seminarId);
+
+    if (deleteError) throw deleteError;
+
+    const rows = buildSeminarMaterialRows(seminarId, materials);
+    if (!rows.length) return;
+
+    const { error: insertError } = await supabase.from("seminar_materials").insert(rows);
+    if (insertError) throw insertError;
+  };
 
   const removeMaterial = (index) => {
     handleChange(
       "materials",
       (formData.materials || []).filter((_, i) => i !== index)
+    );
+  };
+
+  const updateMaterial = (index, patch) => {
+    handleChange(
+      "materials",
+      (formData.materials || []).map((material, i) => (i === index ? { ...material, ...patch } : material))
     );
   };
 
@@ -580,7 +630,8 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
           : null,
         video_conference_id: showMeetingCredentials ? formData.video_conference_id : null,
         video_conference_password: showMeetingCredentials ? formData.video_conference_password : null,
-        materials: buildStoredMaterials(formData.materials || []),
+        materials_access_mode: formData.materials_access_mode || "start_date",
+        materials: [],
       };
 
       seminarData.location_lat =
@@ -597,6 +648,9 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
 
       const { data, error } = await q.select("*").single();
       if (error) throw error;
+
+      await syncSeminarMaterials(data.id, formData.materials || []);
+
       return data;
     },
     onSuccess: async (seminar) => {
@@ -1314,6 +1368,26 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                     )}
                   </p>
 
+                  <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div>
+                      <p className="font-medium text-slate-900">
+                        {t("materials_immediate_access", "Materiales inmediatos tras pago")}
+                      </p>
+                      <p className="text-sm text-slate-500">
+                        {t(
+                          "materials_immediate_access_help",
+                          "Si esta activo, estudiantes con pago aprobado acceden enseguida. Si esta desactivado, se habilitan desde la fecha de inicio del seminario."
+                        )}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={formData.materials_access_mode === "after_payment"}
+                      onCheckedChange={(checked) =>
+                        handleChange("materials_access_mode", checked ? "after_payment" : "start_date")
+                      }
+                    />
+                  </div>
+
                   {normalizedMaterials.length ? (
                     <div className="space-y-3">
                       {normalizedMaterials.map((material, index) => {
@@ -1344,13 +1418,37 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                                       ? "YouTube"
                                       : material.type === "link"
                                         ? "Enlace"
-                                        : "Archivo"
+                                      : "Archivo"
                                   )}
                                 </span>
+                                {material.isPreviewPublic ? (
+                                  <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                                    {t("material_preview_public_badge", "Vista previa")}
+                                  </span>
+                                ) : null}
                               </div>
                               <p className="mt-1 truncate text-sm text-slate-500">
                                 {material.url || material.path || material.mimeType || material.type}
                               </p>
+                              <div className="mt-3 flex items-start justify-between gap-4 rounded-xl border border-slate-200 bg-white px-3 py-3">
+                                <div>
+                                  <p className="text-sm font-medium text-slate-900">
+                                    {t("material_preview_public", "Visible antes de pagar")}
+                                  </p>
+                                  <p className="text-xs text-slate-500">
+                                    {t(
+                                      "material_preview_public_help",
+                                      "Úsalo para compartir materiales abiertos, como el currículo del seminario."
+                                    )}
+                                  </p>
+                                </div>
+                                <Switch
+                                  checked={!!material.isPreviewPublic}
+                                  onCheckedChange={(checked) =>
+                                    updateMaterial(index, { isPreviewPublic: checked })
+                                  }
+                                />
+                              </div>
                             </div>
                             <Button variant="ghost" size="icon" type="button" onClick={() => removeMaterial(index)}>
                               <X className="h-4 w-4" />
@@ -1372,11 +1470,18 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                         {materialTypeOptions.map((option) => {
                           const selected = materialDraft.type === option.value;
                           return (
-                            <button
-                              key={option.value}
-                              type="button"
-                              onClick={() => setMaterialDraft({ type: option.value, title: "", url: "" })}
-                              className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+	                            <button
+	                              key={option.value}
+	                              type="button"
+	                              onClick={() =>
+	                                setMaterialDraft((prev) => ({
+	                                  ...prev,
+	                                  type: option.value,
+	                                  title: "",
+	                                  url: "",
+	                                }))
+	                              }
+	                              className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
                                 selected
                                   ? "border-slate-900 bg-slate-900 text-white"
                                   : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
@@ -1453,14 +1558,33 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                       )}
                     </div>
 
-                    <p className="text-xs text-slate-500">
-                      {materialDraft.type === "file"
-                        ? t("material_file_help", `Formatos permitidos: PDF o ZIP. Máximo ${MAX_MATERIAL_MB}MB.`)
-                        : materialDraft.type === "youtube"
-                          ? t("material_youtube_help", "Comparte un enlace de YouTube para usarlo como material.")
-                          : t("material_link_help", "Comparte un enlace externo útil para el seminario.")}
-                    </p>
-                  </div>
+	                    <p className="text-xs text-slate-500">
+	                      {materialDraft.type === "file"
+	                        ? t("material_file_help", `Formatos permitidos: PDF o ZIP. Máximo ${MAX_MATERIAL_MB}MB.`)
+	                        : materialDraft.type === "youtube"
+	                          ? t("material_youtube_help", "Comparte un enlace de YouTube para usarlo como material.")
+	                          : t("material_link_help", "Comparte un enlace externo útil para el seminario.")}
+	                    </p>
+	                    <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 bg-white px-4 py-4">
+	                      <div>
+	                        <p className="font-medium text-slate-900">
+	                          {t("material_preview_public", "Visible antes de pagar")}
+	                        </p>
+	                        <p className="text-sm text-slate-500">
+	                          {t(
+	                            "material_preview_public_help",
+	                            "Úsalo para compartir materiales abiertos, como el currículo del seminario."
+	                          )}
+	                        </p>
+	                      </div>
+	                      <Switch
+	                        checked={!!materialDraft.is_preview_public}
+	                        onCheckedChange={(checked) =>
+	                          setMaterialDraft((prev) => ({ ...prev, is_preview_public: checked }))
+	                        }
+	                      />
+	                    </div>
+	                  </div>
                 </CardContent>
               </Card>
             </motion.div>
