@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { Link } from "react-router-dom";
 import {
   Drawer,
@@ -29,7 +29,7 @@ export default function EconomicConditionsDrawer({
           <DrawerDescription>
             {t(
               "economic_conditions_subtitle",
-              "Resumen claro de cómo Okalab liquida el excedente y cuándo se liberan los bonos."
+              "Resumen claro de como Okalab liquida el excedente y cuando se liberan los bonos."
             )}
           </DrawerDescription>
         </DrawerHeader>
@@ -42,7 +42,7 @@ export default function EconomicConditionsDrawer({
             <p className="mt-2 text-sm text-emerald-950">
               {t(
                 "economic_conditions_professor_body",
-                "Si el seminario supera el objetivo, recibes {percent}% del excedente neto como bonus. La liquidación económica final se confirma al cerrar la ventana de pago."
+                "Si el seminario supera el objetivo, recibes {percent}% del excedente neto como bonus. La liquidacion economica final se confirma al cerrar la ventana de pago."
               ).replace("{percent}", professorBonusPercent)}
             </p>
           </div>
@@ -88,7 +88,7 @@ export default function EconomicConditionsDrawer({
           <p className="text-xs text-slate-500">
             {t(
               "economic_conditions_legal_note",
-              "También puedes revisar Soporte y Términos para el detalle completo de estas reglas."
+              "Tambien puedes revisar Soporte y Terminos para el detalle completo de estas reglas."
             )}
           </p>
         </div>
@@ -99,7 +99,7 @@ export default function EconomicConditionsDrawer({
               <Link to="/support">{t("support", "Soporte")}</Link>
             </Button>
             <Button asChild variant="outline">
-              <Link to="/terms">{t("auth_terms", "Términos de servicio")}</Link>
+              <Link to="/terms">{t("auth_terms", "Terminos de servicio")}</Link>
             </Button>
           </div>
           <DrawerClose asChild>
@@ -110,3 +110,4 @@ export default function EconomicConditionsDrawer({
     </Drawer>
   );
 }
+

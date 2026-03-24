@@ -1,6 +1,7 @@
-// CreateSeminar.jsx (UNIFIED)
-// Nota: este archivo es grande. Está basado en tu CreateSeminar actual y solo agrega:
-// - modo edición (?edit=...)
+﻿// CreateSeminar.jsx (UNIFIED)
+// Nota: este archivo es grande. EstÃ¡ basado en tu CreateSeminar actual y agrega:
+// - modo ediciÃ³n (?edit=...)
+// - modo nueva ediciÃ³n (?clone=...)
 // - update en vez de insert
 // - spinner al cargar seminario
 
@@ -68,16 +69,16 @@ const categoryOptions = [
 ];
 
 const modalityOptions = [
-  { value: "online", label: "En línea" },
+  { value: "online", label: "En linea" },
   { value: "presential", label: "Presencial" },
-  { value: "hybrid", label: "Híbrida" },
+  { value: "hybrid", label: "Hibrida" },
 ];
 
 const languageOptions = [
-  { value: "es", labelKey: "language_es", fallback: "Español" },
+  { value: "es", labelKey: "language_es", fallback: "Espanol" },
   { value: "en", labelKey: "language_en", fallback: "English" },
-  { value: "fr", labelKey: "language_fr", fallback: "Français" },
-  { value: "ht", labelKey: "language_ht", fallback: "Kreyòl" },
+  { value: "fr", labelKey: "language_fr", fallback: "Francais" },
+  { value: "ht", labelKey: "language_ht", fallback: "Kreyol" },
 ];
 
 const MAX_IMAGE_MB = 2;
@@ -101,6 +102,63 @@ const materialTypeOptions = [
   { value: "link", labelKey: "material_type_link", fallback: "Enlace" },
 ];
 
+function toFiniteNumber(value, fallback) {
+  const next = Number(value);
+  return Number.isFinite(next) ? next : fallback;
+}
+
+function buildSeminarFormState(data, materialRows, fallbackLanguage, cloneMode) {
+  return {
+    title: data?.title || "",
+    description: data?.description || "",
+    category: data?.category || "",
+    modality: data?.modality || "online",
+    start_date: cloneMode ? null : parseDateValue(data?.start_date),
+    end_date: cloneMode ? null : parseDateValue(data?.end_date),
+    total_hours: data?.total_hours ?? "",
+    target_income: data?.target_income ?? "",
+    target_students: toFiniteNumber(data?.target_students, 15),
+    excess_students: toFiniteNumber(data?.excess_students, 0),
+    max_students: data?.max_students ?? "",
+    cover_type: data?.cover_type === "youtube" ? "youtube" : "image",
+    cover_video_url: data?.cover_video_url || "",
+    cover_video_provider: data?.cover_video_provider || "",
+    cover_video_id: data?.cover_video_id || "",
+    image_url: data?.image_url || "",
+    materials: normalizeSeminarMaterials(
+      (materialRows || []).map((material) => ({
+        id: material.id,
+        title: material.title,
+        description: material.description || "",
+        type: material.material_type,
+        url: material.external_url || "",
+        youtube_video_id: material.youtube_video_id || "",
+        mime_type: material.mime_type || "",
+        bucket: material.bucket || "",
+        path: material.storage_path || "",
+        is_preview_public: material.is_preview_public,
+      }))
+    ),
+    language: data?.language || fallbackLanguage || "es",
+    status: cloneMode ? "draft" : (data?.status || "draft"),
+    location_address: data?.location_address || "",
+    location_lat: data?.location_lat ?? null,
+    location_lng: data?.location_lng ?? null,
+    video_conference_platform: data?.video_conference_platform || "zoom",
+    video_conference_platform_custom_name: data?.video_conference_platform_custom_name || "",
+    video_conference_link: data?.video_conference_link || "",
+    video_conference_id: data?.video_conference_id || "",
+    video_conference_password: data?.video_conference_password || "",
+    has_certificate: !!data?.has_certificate,
+    materials_access_mode: data?.materials_access_mode || "start_date",
+    platform_fee_percent: toFiniteNumber(
+      data?.platform_fee_percent,
+      Number(import.meta.env.VITE_DEFAULT_PLATFORM_FEE_PERCENT || 15)
+    ),
+    professor_bonus_percent: toFiniteNumber(data?.professor_bonus_percent, 30),
+  };
+}
+
 
 
 
@@ -111,9 +169,18 @@ export default function CreateSeminar() {
   const { t, language } = useLanguage();
   const dateLocale = useMemo(() => getDateFnsLocale(language), [language]);
   const editId = useMemo(() => new URLSearchParams(location.search).get("edit"), [location.search]);
+  const cloneId = useMemo(() => new URLSearchParams(location.search).get("clone"), [location.search]);
+  const interestRequestId = useMemo(
+    () => new URLSearchParams(location.search).get("interest_request"),
+    [location.search]
+  );
   const isEditing = !!editId;
+  const isCloning = !isEditing && !!cloneId;
+  const sourceSeminarId = editId || cloneId;
 
   const { user, profile, loading, canCreateSeminar, role, contactProfileComplete } = useAuth();
+  const isAdmin = role === "admin";
+  const requiresContactProfile = !isAdmin && !contactProfileComplete;
   const { data: platformSettings } = useQuery({
     queryKey: ["platform_settings_create_seminar"],
     queryFn: async () => {
@@ -135,6 +202,8 @@ export default function CreateSeminar() {
   const settingsAppliedRef = useRef(false);
   const languageTouchedRef = useRef(false);
   const loadedSeminarIdRef = useRef(null);
+  const [sourceSeminarOwner, setSourceSeminarOwner] = useState(null);
+  const [sourceSeminarSummary, setSourceSeminarSummary] = useState(null);
 
   const [formData, setFormData] = useState({
     title: "",
@@ -176,61 +245,58 @@ max_students: "",
     is_preview_public: false,
   });
 
-  // Cargar seminario en modo edición (?edit=<id>)
+  // Cargar seminario en modo ediciÃ³n (?edit=<id>) o nueva ediciÃ³n (?clone=<id>)
   useEffect(() => {
     let cancelled = false;
 
     const load = async () => {
-      if (!isEditing) return;
+      if (!sourceSeminarId) return;
       if (!user) return;
-      if (loadedSeminarIdRef.current === editId) return;
+      const loadedKey = `${isEditing ? "edit" : "clone"}:${sourceSeminarId}`;
+      if (loadedSeminarIdRef.current === loadedKey) return;
 
       setLoadingSeminar(true);
       try {
         const { data, error } = await supabase
           .from("seminars")
           .select("*")
-          .eq("id", editId)
+          .eq("id", sourceSeminarId)
           .single();
 
         if (error) throw error;
         const { data: materialRows, error: materialsError } = await supabase
           .from("seminar_materials")
           .select("*")
-          .eq("seminar_id", editId)
+          .eq("seminar_id", sourceSeminarId)
           .order("sort_order", { ascending: true });
 
         if (materialsError) throw materialsError;
         if (cancelled) return;
 
-        setFormData((prev) => ({
-          ...prev,
-          ...data,
-          start_date: parseDateValue(data.start_date),
-          end_date: parseDateValue(data.end_date),
-          cover_type: data.cover_type === "youtube" ? "youtube" : "image",
-          cover_video_url: data.cover_video_url || "",
-          cover_video_provider: data.cover_video_provider || "",
-          cover_video_id: data.cover_video_id || "",
-          materials_access_mode: data.materials_access_mode || "start_date",
-              materials: normalizeSeminarMaterials(
-                (materialRows || []).map((material) => ({
-                  id: material.id,
-                  title: material.title,
-                  description: material.description || "",
-                  type: material.material_type,
-                  url: material.external_url || "",
-                  youtube_video_id: material.youtube_video_id || "",
-                  mime_type: material.mime_type || "",
-                  bucket: material.bucket || "",
-                  path: material.storage_path || "",
-                  is_preview_public: material.is_preview_public,
-                }))
-              ),
-        }));
-        loadedSeminarIdRef.current = editId;
+        const fallbackLanguage = localStorage.getItem("preferred_language") || "es";
+        setFormData(buildSeminarFormState(data, materialRows, fallbackLanguage, isCloning));
+        setSourceSeminarOwner({
+          professor_id: data?.professor_id || null,
+          instructor_id: data?.instructor_id || data?.professor_id || null,
+          professor_email: data?.professor_email || null,
+          professor_name: data?.professor_name || null,
+        });
+        setSourceSeminarSummary({
+          id: data?.id || null,
+          title: data?.title || "",
+          status: data?.status || "",
+        });
+        loadedSeminarIdRef.current = loadedKey;
       } catch (err) {
-        toast.error(err?.message || t("seminar_edit_load_error", "Error al cargar el seminario para editar"));
+        toast.error(
+          err?.message ||
+            t(
+              isCloning ? "seminar_clone_load_error" : "seminar_edit_load_error",
+              isCloning
+                ? "Error al cargar el seminario base para la nueva edicion"
+                : "Error al cargar el seminario para editar"
+            )
+        );
       } finally {
         if (!cancelled) setLoadingSeminar(false);
       }
@@ -240,13 +306,13 @@ max_students: "",
     return () => {
       cancelled = true;
     };
-  }, [isEditing, editId, user]);
+  }, [isEditing, isCloning, sourceSeminarId, user, t]);
 
-  // Aplicar defaults desde BO en modo creación
+  // Aplicar defaults desde BO en modo creaciÃ³n
   useEffect(() => {
     if (settingsAppliedRef.current) return;
     if (!platformSettings) return;
-    if (isEditing) return;
+    if (isEditing || isCloning) return;
 
     const fee = Number(platformSettings.platform_fee_percent);
     const bonus = Number(platformSettings.surplus_professor_percent);
@@ -258,17 +324,17 @@ max_students: "",
     }));
 
     settingsAppliedRef.current = true;
-  }, [platformSettings, isEditing]);
+  }, [platformSettings, isEditing, isCloning]);
 
   useEffect(() => {
-    if (isEditing) return;
+    if (isEditing || isCloning) return;
     if (languageTouchedRef.current) return;
 
     const preferredLang =
       profile?.preferred_language || localStorage.getItem("preferred_language") || "es";
 
     setFormData((prev) => (prev.language === preferredLang ? prev : { ...prev, language: preferredLang }));
-  }, [isEditing, profile?.preferred_language]);
+  }, [isEditing, isCloning, profile?.preferred_language]);
 
   const handleChange = (field, value) => {
     if (field === "language") {
@@ -395,7 +461,7 @@ max_students: "",
     const path = `${folder}/${crypto.randomUUID()}.${ext}`;
 
     if (maxMb && file.size > maxBytes(maxMb)) {
-      throw new Error(t("file_max_size", `El archivo debe ser máximo ${maxMb}MB.`));
+      throw new Error(t("file_max_size", `El archivo debe ser maximo ${maxMb}MB.`));
     }
 
     if (validateMime && !validateMime(file)) {
@@ -498,7 +564,7 @@ max_students: "",
     if (materialDraft.type === "youtube") {
       const videoId = parseYouTubeVideoId(rawUrl);
       if (!videoId) {
-        toast.error(t("youtube_url_invalid", "Ingresa un enlace válido de YouTube."));
+        toast.error(t("youtube_url_invalid", "Ingresa un enlace valido de YouTube."));
         return;
       }
 
@@ -526,7 +592,7 @@ max_students: "",
         });
         setMaterialDraft((prev) => ({ ...prev, type: "link", title: "", url: "" }));
       } catch {
-        toast.error(t("material_link_invalid", "Ingresa un enlace válido."));
+        toast.error(t("material_link_invalid", "Ingresa un enlace valido."));
       }
     }
   };
@@ -577,9 +643,9 @@ max_students: "",
 
   const createMutation = useMutation({
     mutationFn: async (status) => {
-      if (!user) throw new Error(t("auth_required_create_seminar", "Debes iniciar sesión para crear un seminario."));
+      if (!user) throw new Error(t("auth_required_create_seminar", "Debes iniciar sesion para crear un seminario."));
       if (!canCreateSeminar) throw new Error(t("create_seminar_no_permission", "No tienes permisos para crear seminarios."));
-      if (!contactProfileComplete) {
+      if (requiresContactProfile) {
         navigate(buildContactOnboardingUrl(`${location.pathname}${location.search || ""}`));
         throw new Error(
           t(
@@ -592,7 +658,7 @@ max_students: "",
       const { data: authData, error: authError } = await supabase.auth.getUser();
       const currentUser = authData?.user || user;
       if (authError || !currentUser) {
-        throw new Error(t("auth_required_create_seminar", "Debes iniciar sesión para crear un seminario."));
+        throw new Error(t("auth_required_create_seminar", "Debes iniciar sesion para crear un seminario."));
       }
 
       const professorName =
@@ -606,12 +672,21 @@ max_students: "",
         status,
         ...(isEditing
           ? {}
-              : {
-              professor_id: currentUser.id,
-              instructor_id: currentUser.id,
-              professor_email: currentUser.email,
-              professor_name: professorName,
-            }),
+          : isCloning && sourceSeminarOwner?.professor_id && sourceSeminarOwner?.professor_email
+            ? {
+                professor_id: sourceSeminarOwner.professor_id,
+                instructor_id: sourceSeminarOwner.instructor_id || sourceSeminarOwner.professor_id,
+                professor_email: sourceSeminarOwner.professor_email,
+                professor_name: sourceSeminarOwner.professor_name || professorName,
+                source_seminar_id: sourceSeminarId,
+                source_interest_request_id: interestRequestId || null,
+              }
+            : {
+                professor_id: currentUser.id,
+                instructor_id: currentUser.id,
+                professor_email: currentUser.email,
+                professor_name: professorName,
+              }),
         total_hours: parseFloat(formData.total_hours),
         target_income: parseFloat(formData.target_income),
         target_students: parseInt(formData.target_students, 10),
@@ -654,6 +729,18 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
       return data;
     },
     onSuccess: async (seminar) => {
+      if (!isEditing && interestRequestId) {
+        try {
+          const { error: markConvertedError } = await supabase.rpc("update_seminar_interest_request_status", {
+            p_request_id: interestRequestId,
+            p_status: "converted",
+          });
+          if (markConvertedError) throw markConvertedError;
+        } catch (err) {
+          console.warn("interest request convert error:", err?.message || err);
+        }
+      }
+
       queryClient.setQueryData(["seminar", seminar.id], seminar);
 
       await Promise.all([
@@ -665,9 +752,17 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
         queryClient.invalidateQueries({ queryKey: ["home-featured-seminars"] }),
         queryClient.invalidateQueries({ queryKey: ["admin-seminars"] }),
         queryClient.invalidateQueries({ queryKey: ["my-seminars"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-seminar-interest-requests"] }),
+        queryClient.invalidateQueries({ queryKey: ["seminar-interest-requests", sourceSeminarId] }),
       ]);
 
-      toast.success(isEditing ? t("seminar_updated", "Seminario actualizado correctamente") : t("seminar_created", "Seminario creado correctamente"));
+      toast.success(
+        isEditing
+          ? t("seminar_updated", "Seminario actualizado correctamente")
+          : isCloning
+            ? t("seminar_edition_created", "Nueva edicion creada correctamente")
+            : t("seminar_created", "Seminario creado correctamente")
+      );
       navigate(`/seminars/${seminar.id}`);
     },
     onError: (err) => {
@@ -680,7 +775,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
       <div className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
         <div className="flex items-center gap-3 text-slate-600">
           <Loader2 className="h-5 w-5 animate-spin" />
-          <span>{t("common_loading", "Cargando…")}</span>
+          <span>{t("common_loading", "Cargando...")}</span>
         </div>
       </div>
     );
@@ -691,7 +786,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
       <div className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
         <div className="flex items-center gap-3 text-slate-600">
           <Loader2 className="h-5 w-5 animate-spin" />
-          <span>{t("seminar_loading", "Cargando seminario…")}</span>
+          <span>{t("seminar_loading", "Cargando seminario...")}</span>
         </div>
       </div>
     );
@@ -702,10 +797,10 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
       <div className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
         <Card className="border-0 shadow-md max-w-md w-full">
           <CardHeader>
-            <CardTitle>{t("auth_login", "Inicia sesión")}</CardTitle>
+            <CardTitle>{t("auth_login", "Inicia sesion")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-slate-600 text-sm">{t("auth_required_create_seminar", "Debes iniciar sesión para crear un seminario.")}</p>
+            <p className="text-slate-600 text-sm">{t("auth_required_create_seminar", "Debes iniciar sesion para crear un seminario.")}</p>
             <Button className="w-full" onClick={() => navigate("/login")}>
               {t("auth_go_login", "Ir a login")}
             </Button>
@@ -737,7 +832,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
     );
   }
 
-  if (!contactProfileComplete) {
+  if (requiresContactProfile) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
         <Card className="border-0 shadow-md max-w-lg w-full">
@@ -776,36 +871,64 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
           </Link>
           <div>
             <h1 className="text-2xl font-bold text-slate-900">
-              {isEditing ? t("edit_seminar", "Editar seminario") : t("createSeminar", "Crear seminario")}
+              {isEditing
+                ? t("edit_seminar", "Editar seminario")
+                : isCloning
+                  ? t("seminar_create_new_edition", "Crear nueva edicion")
+                  : t("createSeminar", "Crear seminario")}
             </h1>
             <p className="text-slate-500">
               {isEditing
                 ? t("edit_seminar_subtitle", "Actualiza los datos de tu seminario")
-                : t("create_seminar_subtitle", "Define tu seminario y establece tu ingreso objetivo")}
+                : isCloning
+                  ? t(
+                      "seminar_create_new_edition_subtitle",
+                      "Usa este seminario como base y ajusta las fechas para publicar una nueva edicion."
+                    )
+                  : t("create_seminar_subtitle", "Define tu seminario y establece tu ingreso objetivo")}
             </p>
           </div>
         </div>
+
+        {isCloning && sourceSeminarSummary ? (
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-2 text-sm text-slate-600 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+              <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-800">
+                {t("seminar_trace_new_edition", "Nueva edicion")}
+              </span>
+              <span>
+                {t("seminar_trace_base", "Seminario base")}:{" "}
+                <span className="font-medium text-slate-900">{sourceSeminarSummary.title || sourceSeminarSummary.id}</span>
+              </span>
+              {interestRequestId ? (
+                <span className="rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700">
+                  {t("seminar_trace_from_interest", "Creada desde interesado")}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
               <Card className="border-0 shadow-md">
                 <CardHeader>
-                  <CardTitle>{t("basic_info", "Información básica")}</CardTitle>
+                  <CardTitle>{t("basic_info", "Informacion basica")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-5">
                   <div className="space-y-2">
-                    <Label>{t("title", "Título")} *</Label>
+                    <Label>{t("title", "Titulo")} *</Label>
                     <Input
                       value={formData.title}
                       onChange={(e) => handleChange("title", e.target.value)}
-                      placeholder={t("seminar_title_placeholder", "Ej: Introducción al Marketing Digital")}
+                      placeholder={t("seminar_title_placeholder", "Ej: Introduccion al Marketing Digital")}
                       className="h-12"
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label>{t("description", "Descripción")} *</Label>
+                    <Label>{t("description", "Descripcion")} *</Label>
                     <Textarea
                       value={formData.description}
                       onChange={(e) => handleChange("description", e.target.value)}
@@ -816,10 +939,10 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
 
                   <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div className="space-y-2">
-                      <Label>{t("category", "Categoría")} *</Label>
+                      <Label>{t("category", "Categoria")} *</Label>
                       <Select value={formData.category} onValueChange={(v) => handleChange("category", v)}>
                         <SelectTrigger className="h-12">
-                          <SelectValue placeholder={t("selectCategory", "Selecciona categoría")} />
+                          <SelectValue placeholder={t("selectCategory", "Selecciona categoria")} />
                         </SelectTrigger>
                         <SelectContent className="bg-white z-[99999] shadow-lg border">
                           {categoryOptions.map((c) => (
@@ -870,7 +993,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                       <p className="text-xs text-slate-500">
                         {t(
                           "seminar_cover_help",
-                          "Elige si la portada principal será una imagen o un video de YouTube."
+                          "Elige si la portada principal sera una imagen o un video de YouTube."
                         )}
                       </p>
                     </div>
@@ -927,7 +1050,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
 
                         {formData.cover_video_url && !coverVideoId ? (
                           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                            {t("youtube_url_invalid", "Ingresa un enlace válido de YouTube.")}
+                            {t("youtube_url_invalid", "Ingresa un enlace valido de YouTube.")}
                           </div>
                         ) : null}
 
@@ -1006,7 +1129,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                         <p className="text-xs text-slate-500">
                           {t(
                             "seminar_cover_image_help",
-                            `Formatos permitidos: JPG/PNG/WebP. Máximo ${MAX_IMAGE_MB}MB.`
+                            `Formatos permitidos: JPG/PNG/WebP. Maximo ${MAX_IMAGE_MB}MB.`
                           )}
                         </p>
                       </div>
@@ -1023,7 +1146,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
             >
               <Card className="border-0 shadow-md">
                 <CardHeader>
-                  <CardTitle>{t("dates_duration", "Fechas y duración")}</CardTitle>
+                  <CardTitle>{t("dates_duration", "Fechas y duracion")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-5">
                   <div className="grid sm:grid-cols-2 gap-4">
@@ -1110,7 +1233,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                       <p className="text-xs text-slate-500">
                         {t(
                           "target_goal_slots_help",
-                          "Este número define el cupo objetivo a partir del cual el precio llega a su mínimo."
+                          "Este numero define el cupo objetivo a partir del cual el precio llega a su minimo."
                         )}
                       </p>
                     </div>
@@ -1137,17 +1260,17 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
 
                   <div className="rounded-xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-950">
                     <p className="font-medium">
-                      {t("payment_window_preview_title", "Ventana de pago configurada por administración")}
+                      {t("payment_window_preview_title", "Ventana de pago configurada por administracion")}
                     </p>
                     <p className="mt-1 text-sky-900">
                       {formData.start_date
                         ? t(
                             "payment_window_preview_help",
-                            "Estas fechas se calculan automáticamente con la fecha de inicio y los días definidos en BackOffice."
+                            "Estas fechas se calculan automaticamente con la fecha de inicio y los dias definidos en BackOffice."
                           )
                         : t(
                             "payment_window_preview_missing_start",
-                            "Selecciona la fecha de inicio para ver cuándo abrirán y cerrarán los pagos."
+                            "Selecciona la fecha de inicio para ver cuando abriran y cerraran los pagos."
                           )}
                     </p>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -1158,7 +1281,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                         <p className="mt-1 font-semibold">
                           {paymentWindowPreview.paymentOpenDate
                             ? format(paymentWindowPreview.paymentOpenDate, "PPP", { locale: dateLocale })
-                            : "—"}
+                            : "-"}
                         </p>
                       </div>
                       <div className="rounded-lg bg-white/70 px-3 py-2">
@@ -1168,7 +1291,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                         <p className="mt-1 font-semibold">
                           {paymentWindowPreview.paymentCloseDate
                             ? format(paymentWindowPreview.paymentCloseDate, "PPP", { locale: dateLocale })
-                            : "—"}
+                            : "-"}
                         </p>
                       </div>
                     </div>
@@ -1188,16 +1311,16 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <MapPin className="h-5 w-5" />
-                      {t("location", "Ubicación")}
+                      {t("location", "Ubicacion")}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
-                      <Label>{t("address", "Dirección")}</Label>
+                      <Label>{t("address", "Direccion")}</Label>
                       <Textarea
                         value={formData.location_address}
                         onChange={(e) => handleChange("location_address", e.target.value)}
-                        placeholder={t("address_placeholder", "Dirección completa del lugar...")}
+                        placeholder={t("address_placeholder", "Direccion completa del lugar...")}
                         className="min-h-20"
                       />
                     </div>
@@ -1332,8 +1455,8 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                 <CardContent className="space-y-4">
                   <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl">
                     <div>
-                      <p className="font-medium text-slate-900">{t("certificate_offer", "Ofrecer certificado de finalización")}</p>
-                      <p className="text-sm text-slate-500">{t("certificate_help", "Los estudiantes recibirán un certificado al completar")}</p>
+                      <p className="font-medium text-slate-900">{t("certificate_offer", "Ofrecer certificado de finalizacion")}</p>
+                      <p className="text-sm text-slate-500">{t("certificate_help", "Los estudiantes recibiran un certificado al completar")}</p>
                     </div>
 
                     <label className="relative inline-flex items-center cursor-pointer">
@@ -1438,7 +1561,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                                   <p className="text-xs text-slate-500">
                                     {t(
                                       "material_preview_public_help",
-                                      "Úsalo para compartir materiales abiertos, como el currículo del seminario."
+                                      "Usalo para compartir materiales abiertos, como el curriculo del seminario."
                                     )}
                                   </p>
                                 </div>
@@ -1459,7 +1582,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                     </div>
                   ) : (
                     <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
-                      {t("material_empty", "Aún no has agregado materiales.")}
+                      {t("material_empty", "Aun no has agregado materiales.")}
                     </div>
                   )}
 
@@ -1504,13 +1627,13 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                     <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                       <div className="space-y-2">
                         <Label htmlFor="material-title">
-                          {t("material_title_optional", "Título del material (opcional)")}
+                          {t("material_title_optional", "Titulo del material (opcional)")}
                         </Label>
                         <Input
                           id="material-title"
                           value={materialDraft.title}
                           onChange={(e) => handleMaterialDraftChange("title", e.target.value)}
-                          placeholder={t("material_title", "Ej: Guía del seminario")}
+                          placeholder={t("material_title", "Ej: Guia del seminario")}
                           className="h-12"
                         />
                       </div>
@@ -1560,10 +1683,10 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
 
 	                    <p className="text-xs text-slate-500">
 	                      {materialDraft.type === "file"
-	                        ? t("material_file_help", `Formatos permitidos: PDF o ZIP. Máximo ${MAX_MATERIAL_MB}MB.`)
+		                        ? t("material_file_help", `Formatos permitidos: PDF o ZIP. Maximo ${MAX_MATERIAL_MB}MB.`)
 	                        : materialDraft.type === "youtube"
 	                          ? t("material_youtube_help", "Comparte un enlace de YouTube para usarlo como material.")
-	                          : t("material_link_help", "Comparte un enlace externo útil para el seminario.")}
+		                          : t("material_link_help", "Comparte un enlace externo util para el seminario.")}
 	                    </p>
 	                    <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 bg-white px-4 py-4">
 	                      <div>
@@ -1573,7 +1696,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
 	                        <p className="text-sm text-slate-500">
 	                          {t(
 	                            "material_preview_public_help",
-	                            "Úsalo para compartir materiales abiertos, como el currículo del seminario."
+		                            "Usalo para compartir materiales abiertos, como el curriculo del seminario."
 	                          )}
 	                        </p>
 	                      </div>
@@ -1622,7 +1745,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                   </div>
 
                   <div className="p-4 bg-white/10 rounded-xl space-y-3">
-                    <p className="text-sm text-white/70">{t("price_calculation", "Cálculo de precios:")}</p>
+	                    <p className="text-sm text-white/70">{t("price_calculation", "Calculo de precios:")}</p>
                     {formData.target_income ? (
                       <>
                         <div className="flex justify-between text-sm">
@@ -1632,7 +1755,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                           </span>
                         </div>
                         <div className="flex justify-between text-sm border-t border-white/10 pt-2">
-                          <span>{t("platformFee", "Comisión plataforma")} ({formData.platform_fee_percent}%):</span>
+	                          <span>{t("platformFee", "Comision plataforma")} ({formData.platform_fee_percent}%):</span>
                           <span className="font-bold text-amber-300">
                             -$
                             {(
@@ -1675,8 +1798,8 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                   </div>
 
                   <p className="text-xs text-white/50">
-                    {t("students_pay_less", "Los estudiantes pagan menos cuantos más confirmen.")}{" "}
-                    {t("goal_slots_short", "Cupos objetivo")}: {formData.target_students || "-"} ·{" "}
+                    {t("students_pay_less", "Los estudiantes pagan menos cuanto mas confirmen.")}{" "}
+                    {t("goal_slots_short", "Cupos objetivo")}: {formData.target_students || "-"} {" | "}
                     {t("total_capacity", "Capacidad total")}: {formData.max_students || "-"}
                   </p>
                 </CardContent>
@@ -1724,3 +1847,6 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
     </div>
   );
 }
+
+
+

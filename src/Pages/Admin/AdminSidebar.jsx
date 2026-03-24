@@ -46,6 +46,7 @@ export default function AdminSidebar() {
           <Item to="/admin/wallets">{t("admin_wallet", "Wallet")}</Item>
           <Item to="/admin/transactions">{t("admin_transactions", "Transactions")}</Item>
           <Item to="/admin/earnings">{t("admin_earnings", "Ganancias")}</Item>
+          <Item to="/admin/interest-requests">{t("admin_interest_requests", "Interesados")}</Item>
           <Item to="/admin/withdrawals">{t("admin_withdrawals", "Withdrawals")}</Item>
         </div>
       </Section>

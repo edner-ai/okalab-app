@@ -28,10 +28,32 @@ export default function AdminSeminars() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("seminars")
-        .select("id, title, description, category, start_date, end_date, total_hours, status, professor_email")
+        .select(
+          "id, title, description, category, start_date, end_date, total_hours, status, professor_email, source_seminar_id, source_interest_request_id"
+        )
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return data ?? [];
+
+      const seminars = data ?? [];
+      const sourceIds = [...new Set(seminars.map((seminar) => seminar.source_seminar_id).filter(Boolean))];
+
+      let sourceSeminars = [];
+      if (sourceIds.length > 0) {
+        const { data: sourceRows, error: sourceError } = await supabase
+          .from("seminars")
+          .select("id, title")
+          .in("id", sourceIds);
+        if (sourceError) throw sourceError;
+        sourceSeminars = sourceRows ?? [];
+      }
+
+      const sourceTitleById = new Map(sourceSeminars.map((seminar) => [seminar.id, seminar.title]));
+      return seminars.map((seminar) => ({
+        ...seminar,
+        source_seminar_title: seminar.source_seminar_id
+          ? sourceTitleById.get(seminar.source_seminar_id) || seminar.source_seminar_id
+          : "",
+      }));
     },
   });
 
@@ -44,7 +66,8 @@ export default function AdminSeminars() {
         s.description || "",
         s.category || "",
         s.professor_email || "",
-      ]
+        s.source_seminar_title || "",
+        ]
         .join(" ")
         .toLowerCase();
       return haystack.includes(q);
@@ -111,9 +134,21 @@ export default function AdminSeminars() {
               <TableBody>
                 {filtered.map((s) => (
                   <TableRow key={s.id}>
-                    <TableCell className="font-medium truncate max-w-[220px]">
-                      {s.title || "-"}
-                    </TableCell>
+	                    <TableCell className="font-medium truncate max-w-[220px]">
+	                      <div className="space-y-1">
+	                        <p className="truncate">{s.title || "-"}</p>
+	                        {s.source_seminar_id ? (
+	                          <p className="truncate text-xs font-normal text-slate-500">
+	                            {t("seminar_trace_base", "Seminario base")}: {s.source_seminar_title}
+	                          </p>
+	                        ) : null}
+	                        {s.source_interest_request_id ? (
+	                          <p className="text-xs font-normal text-emerald-700">
+	                            {t("seminar_trace_from_interest", "Creada desde interesado")}
+	                          </p>
+	                        ) : null}
+	                      </div>
+	                    </TableCell>
                     <TableCell className="truncate max-w-[240px]">
                       {s.description || "-"}
                     </TableCell>

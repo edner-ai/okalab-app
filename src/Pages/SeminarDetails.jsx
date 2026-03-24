@@ -26,6 +26,7 @@ import { Button } from "../Components/ui/button";
 import { Card, CardContent } from "../Components/ui/card";
 import { Badge } from "../Components/ui/badge";
 import { Input } from "../Components/ui/input";
+import { Textarea } from "../Components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +38,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../Components/ui/tabs"
 import StarRating from "../Components/reviews/StarRating";
 import PaymentWindowCountdown from "../Components/seminars/PaymentWindowCountdown";
 import LocationInfo from "../Components/seminars/LocationInfo";
+import { getSeminarInterestSourceLabel } from "../utils/seminarInterest";
 
 import {
   Calendar,
@@ -103,8 +105,15 @@ export default function SeminarDetails() {
   const [showEnrollDialog, setShowEnrollDialog] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showPayDialog, setShowPayDialog] = useState(false);
+  const [showInterestDialog, setShowInterestDialog] = useState(false);
   const [copied, setCopied] = useState(false);
   const [referralPrompted, setReferralPrompted] = useState(false);
+  const [interestForm, setInterestForm] = useState({
+    full_name: "",
+    email: "",
+    phone: "",
+    message: "",
+  });
 
   const { user, profile, contactProfileComplete } = useAuth();
   const residenceCountryCode = normalizeCountryCode(profile?.country_code);
@@ -196,6 +205,7 @@ export default function SeminarDetails() {
 
   const maxStudents = Number(seminar?.max_students || 0);
   const isFull = Number.isFinite(maxStudents) && maxStudents > 0 && enrollmentCount >= maxStudents;
+  const isCompleted = String(seminar?.status || "").toLowerCase() === "completed";
   const seminarStartDate = useMemo(() => {
     if (!seminar?.start_date) return null;
     return parseDateValue(seminar.start_date);
@@ -281,6 +291,22 @@ export default function SeminarDetails() {
   const isOwner = !!user && (seminar?.professor_id === user.id || seminar?.instructor_id === user.id);
   const isOwnerProfessor = isOwner && (role === "professor" || role === "teacher" || role === "" || role === "instructor");
   const professorProfileId = seminar?.professor_id || seminar?.instructor_id || null;
+  const interestSourceType = isCompleted ? "completed" : isFull ? "full" : null;
+  const canRequestInterest =
+    !!seminar &&
+    !userEnrollment &&
+    !isOwnerProfessor &&
+    !isAdmin &&
+    !!interestSourceType;
+  const interestDefaultForm = useMemo(
+    () => ({
+      full_name: profile?.full_name || "",
+      email: user?.email || profile?.email || "",
+      phone: profile?.phone || "",
+      message: "",
+    }),
+    [profile?.email, profile?.full_name, profile?.phone, user?.email]
+  );
 
   useEffect(() => {
     if (!seminar) return;
@@ -361,6 +387,11 @@ export default function SeminarDetails() {
       setShowEnrollDialog(false);
     }
   }, [userEnrollment, showEnrollDialog]);
+
+  useEffect(() => {
+    if (!showInterestDialog) return;
+    setInterestForm(interestDefaultForm);
+  }, [showInterestDialog, interestDefaultForm]);
 
   useEffect(() => {
     if (!referralCode || referralPrompted) return;
@@ -656,6 +687,57 @@ if (error) {
       ),
   });
 
+  const interestRequestMutation = useMutation({
+    mutationFn: async () => {
+      if (!seminarId || !interestSourceType) {
+        throw new Error(t("seminar_interest_unavailable", "Esta solicitud no esta disponible para este seminario."));
+      }
+
+      const fullName = String(interestForm.full_name || "").trim();
+      const email = String(interestForm.email || "").trim().toLowerCase();
+
+      if (!fullName) {
+        throw new Error(t("seminar_interest_name_required", "Tu nombre es obligatorio."));
+      }
+
+      if (!email) {
+        throw new Error(t("seminar_interest_email_required", "Tu correo es obligatorio."));
+      }
+
+      const { error } = await supabase.rpc("submit_seminar_interest_request", {
+        p_seminar_id: seminarId,
+        p_full_name: fullName,
+        p_email: email,
+        p_phone: interestForm.phone || null,
+        p_country_code: residenceCountryCode || null,
+        p_preferred_language: language || null,
+        p_message: interestForm.message || null,
+        p_source_type: interestSourceType,
+      });
+
+      if (error) throw error;
+      return true;
+    },
+    onSuccess: () => {
+      setShowInterestDialog(false);
+      toast.success(
+        t(
+          "seminar_interest_success",
+          "Tu solicitud fue registrada. El profesor o el equipo de Okalab podran contactarte si se abre una nueva edicion."
+        )
+      );
+    },
+    onError: (err) => {
+      toast.error(
+        err?.message ||
+          t(
+            "seminar_interest_error",
+            "No se pudo registrar tu solicitud. Intenta nuevamente."
+          )
+      );
+    },
+  });
+
   const copyReferralLink = () => {
     if (!shareUrl) return;
     navigator.clipboard.writeText(shareUrl);
@@ -668,6 +750,22 @@ if (error) {
     if (userEnrollment?.id) return `${base}?ref=${userEnrollment.id}`;
     return base;
   }, [seminarId, userEnrollment?.id]);
+
+  const interestSourceLabel = interestSourceType
+    ? getSeminarInterestSourceLabel(interestSourceType, t)
+    : "";
+  const interestDialogTitle = isCompleted
+    ? t("seminar_interest_reopen_title", "Solicitar reapertura")
+    : t("seminar_interest_full_title", "Unirme a la lista de interes");
+  const interestDialogDescription = isCompleted
+    ? t(
+        "seminar_interest_completed_note",
+        "Este seminario ya finalizo, pero puedes dejar tus datos para una nueva edicion."
+      )
+    : t(
+        "seminar_interest_full_note",
+        "Este seminario ya lleno sus cupos. Deja tus datos para avisarte si se abre una nueva edicion."
+      );
 
   const shareMessage = useMemo(() => {
     const msg = t("share_message", "Mira este seminario en Okalab:");
@@ -1346,6 +1444,28 @@ if (error) {
                       </p>
                     </div>
                   </div>
+                ) : canRequestInterest ? (
+                  <div className="space-y-3">
+                    <div className="p-4 bg-amber-50 rounded-xl text-amber-900 text-sm">
+                      {isCompleted
+                        ? t(
+                            "seminar_interest_completed_public_note",
+                            "Este seminario ya finalizo. Puedes dejar tus datos para solicitar una nueva edicion."
+                          )
+                        : t(
+                            "seminar_interest_full_public_note",
+                            "Los cupos ya se llenaron. Puedes dejar tus datos para que te contacten si se reabre."
+                          )}
+                    </div>
+                    <Button
+                      onClick={() => setShowInterestDialog(true)}
+                      className="w-full h-12 bg-slate-900 hover:bg-slate-800 text-base"
+                    >
+                      {isCompleted
+                        ? t("seminar_request_reopen", "Solicitar reapertura")
+                        : t("seminar_join_interest_list", "Unirme a la lista de interes")}
+                    </Button>
+                  </div>
                 ) : isEnded ? (
                   <div className="space-y-3">
                     <div className="p-4 bg-amber-50 rounded-xl text-amber-900 text-sm">
@@ -1503,6 +1623,74 @@ if (error) {
       </Dialog>
 
 
+      <Dialog open={showInterestDialog} onOpenChange={setShowInterestDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{interestDialogTitle}</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700 space-y-2">
+              <p className="font-medium text-slate-900">{seminar.title}</p>
+              <p>{interestDialogDescription}</p>
+              {interestSourceLabel ? <Badge variant="outline">{interestSourceLabel}</Badge> : null}
+            </div>
+
+            <div className="grid gap-3">
+              <Input
+                value={interestForm.full_name}
+                onChange={(e) =>
+                  setInterestForm((current) => ({ ...current, full_name: e.target.value }))
+                }
+                placeholder={t("seminar_interest_name", "Nombre completo")}
+              />
+              <Input
+                type="email"
+                value={interestForm.email}
+                onChange={(e) =>
+                  setInterestForm((current) => ({ ...current, email: e.target.value }))
+                }
+                placeholder={t("seminar_interest_email", "Correo electronico")}
+              />
+              <Input
+                value={interestForm.phone}
+                onChange={(e) =>
+                  setInterestForm((current) => ({ ...current, phone: e.target.value }))
+                }
+                placeholder={t("seminar_interest_phone", "Telefono o WhatsApp (opcional)")}
+              />
+              <Textarea
+                value={interestForm.message}
+                onChange={(e) =>
+                  setInterestForm((current) => ({ ...current, message: e.target.value }))
+                }
+                rows={4}
+                placeholder={t(
+                  "seminar_interest_message",
+                  "Deja un comentario si quieres que te contacten cuando haya una nueva edicion."
+                )}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowInterestDialog(false)}>
+              {t("common_cancel", "Cancelar")}
+            </Button>
+            <Button
+              onClick={() => interestRequestMutation.mutate()}
+              disabled={interestRequestMutation.isPending}
+              className="bg-slate-900 hover:bg-slate-800"
+            >
+              {interestRequestMutation.isPending
+                ? t("common_processing", "Procesando...")
+                : isCompleted
+                  ? t("seminar_request_reopen", "Solicitar reapertura")
+                  : t("seminar_join_interest_list", "Unirme a la lista de interes")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 {/* Pay Dialog (según flujo del pdf/capturas) */}
 <Dialog open={showPayDialog} onOpenChange={setShowPayDialog}>
   <DialogContent className="sm:max-w-md">
@@ -1616,3 +1804,4 @@ if (error) {
     </div>
   );
 }
+

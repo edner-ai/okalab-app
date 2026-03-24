@@ -1,4 +1,4 @@
-// MySeminars.jsx (FIXED: Student/Professor/Admin + styling + payment buttons)
+﻿// MySeminars.jsx (FIXED: Student/Professor/Admin + styling + payment buttons)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
@@ -10,6 +10,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "../Components/ui/card"
 import { Badge } from "../Components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "../Components/ui/tabs";
 import { Input } from "../Components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../Components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -48,6 +55,13 @@ import { buildPublicAppUrl } from "../utils/appUrl";
 import { buildWhatsAppLink } from "../utils/contactProfile";
 import { parseDateValue } from "../utils/dateValue";
 import { resolvePaymentWindow } from "../utils/paymentWindow";
+import {
+  buildCreateEditionUrl,
+  getSeminarInterestSourceLabel,
+  getSeminarInterestStatusBadgeClass,
+  getSeminarInterestStatusLabel,
+  seminarInterestStatusOptions,
+} from "../utils/seminarInterest";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -190,6 +204,21 @@ export default function MySeminars() {
     },
   });
 
+  const { data: seminarInterestRequests = [], isLoading: interestRequestsLoading } = useQuery({
+    queryKey: ["seminar-interest-requests", selectedSeminar?.id],
+    enabled: !!user && !loading && isProfessor && !!selectedSeminar?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("seminar_interest_requests")
+        .select("*")
+        .eq("seminar_id", selectedSeminar.id)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
   // -------- STUDENT: inscripciones + seminarios inscritos --------
   const { data: myEnrollments = [], isLoading: myEnrollmentsLoading } = useQuery({
     queryKey: ["my-enrollments", user?.id],
@@ -254,7 +283,7 @@ export default function MySeminars() {
   });
 
   const formatPaymentWindowDate = (value) =>
-    value ? format(value, "PPP", { locale: dateLocale }) : "—";
+    value ? format(value, "PPP", { locale: dateLocale }) : "â€”";
 
   const getCompletionGate = (seminar) => {
     if (!seminar?.id || !canMarkSeminarCompleted(seminar?.status)) {
@@ -291,7 +320,7 @@ export default function MySeminars() {
       allowed: false,
       reason: t(
         "complete_seminar_payment_window_open_error",
-        "Podrás marcar este seminario como completado cuando cierre la ventana de pago el {close}."
+        "PodrÃ¡s marcar este seminario como completado cuando cierre la ventana de pago el {close}."
       ).replace("{close}", formatPaymentWindowDate(paymentWindow.paymentCloseDate)),
       paymentWindow,
     };
@@ -301,7 +330,7 @@ export default function MySeminars() {
     const map = new Map();
     for (const e of myEnrollments) {
       if (!e?.seminar_id) continue;
-      if (!map.has(e.seminar_id)) map.set(e.seminar_id, e); // más reciente
+      if (!map.has(e.seminar_id)) map.set(e.seminar_id, e); // mÃ¡s reciente
     }
     return map;
   }, [myEnrollments]);
@@ -446,7 +475,7 @@ export default function MySeminars() {
           <DialogDescription>
             {t(
               "complete_seminar_confirm_message",
-              "Marca este seminario como completado solo cuando haya finalizado realmente. Esta acción puede liberar bonos retenidos y habilitar procesos posteriores."
+              "Marca este seminario como completado solo cuando haya finalizado realmente. Esta acciÃ³n puede liberar bonos retenidos y habilitar procesos posteriores."
             )}
           </DialogDescription>
         </DialogHeader>
@@ -497,6 +526,31 @@ export default function MySeminars() {
     [seminarContactDirectory]
   );
 
+  const interestEmailList = useMemo(
+    () => seminarInterestRequests.map((row) => row.email).filter(Boolean),
+    [seminarInterestRequests]
+  );
+
+  const updateInterestStatusMutation = useMutation({
+    mutationFn: async ({ id, status }) => {
+      const { error } = await supabase.rpc("update_seminar_interest_request_status", {
+        p_request_id: id,
+        p_status: status,
+      });
+      if (error) throw error;
+      return true;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["seminar-interest-requests", selectedSeminar?.id] });
+      toast.success(t("seminar_interest_status_saved", "Estado actualizado."));
+    },
+    onError: (err) => {
+      toast.error(
+        err?.message || t("seminar_interest_status_error", "No se pudo actualizar el estado.")
+      );
+    },
+  });
+
   const copyContactDirectory = async () => {
     const content = seminarContactDirectory
       .map((row) =>
@@ -506,13 +560,13 @@ export default function MySeminars() {
           row.whatsapp_number || "",
           row.phone || "",
           row.preferred_contact_method || "",
-          row.allow_teacher_contact ? t("yes", "Sí") : t("no", "No"),
+          row.allow_teacher_contact ? t("yes", "SÃ­") : t("no", "No"),
         ].join("\t")
       )
       .join("\n");
 
     if (!content) {
-      toast.error(t("teacher_contact_directory_empty", "Aún no hay contactos disponibles."));
+      toast.error(t("teacher_contact_directory_empty", "AÃºn no hay contactos disponibles."));
       return;
     }
 
@@ -522,7 +576,7 @@ export default function MySeminars() {
 
   const exportContactDirectory = () => {
     if (!seminarContactDirectory.length) {
-      toast.error(t("teacher_contact_directory_empty", "Aún no hay contactos disponibles."));
+      toast.error(t("teacher_contact_directory_empty", "AÃºn no hay contactos disponibles."));
       return;
     }
 
@@ -562,11 +616,66 @@ export default function MySeminars() {
     }
 
     const subject = selectedSeminar?.title
-      ? t("teacher_contact_email_subject", "Okalab · Comunicación del seminario") + `: ${selectedSeminar.title}`
-      : t("teacher_contact_email_subject", "Okalab · Comunicación del seminario");
+      ? t("teacher_contact_email_subject", "Okalab Â· ComunicaciÃ³n del seminario") + `: ${selectedSeminar.title}`
+      : t("teacher_contact_email_subject", "Okalab Â· ComunicaciÃ³n del seminario");
     window.location.href = `mailto:?bcc=${encodeURIComponent(
       emailContactList.join(",")
     )}&subject=${encodeURIComponent(subject)}`;
+  };
+
+  const exportInterestRequests = () => {
+    if (!seminarInterestRequests.length) {
+      toast.error(t("seminar_interest_empty", "Aun no hay interesados registrados."));
+      return;
+    }
+
+    const rows = [
+      ["full_name", "email", "phone", "country_code", "source_type", "status", "message", "created_at"],
+      ...seminarInterestRequests.map((row) => [
+        row.full_name || "",
+        row.email || "",
+        row.phone || "",
+        row.country_code || "",
+        row.source_type || "",
+        row.status || "",
+        row.message || "",
+        row.created_at || "",
+      ]),
+    ];
+
+    const csv = rows
+      .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `seminar-interest-${selectedSeminar?.id || "export"}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
+  const emailInterestedPeople = () => {
+    if (!interestEmailList.length) {
+      toast.error(t("seminar_interest_no_email", "No hay correos disponibles para contactar."));
+      return;
+    }
+
+    const subject = selectedSeminar?.title
+      ? t("seminar_interest_email_subject", "Okalab Â· Nueva edicion del seminario") + `: ${selectedSeminar.title}`
+      : t("seminar_interest_email_subject", "Okalab Â· Nueva edicion del seminario");
+
+    window.location.href = `mailto:?bcc=${encodeURIComponent(
+      interestEmailList.join(",")
+    )}&subject=${encodeURIComponent(subject)}`;
+  };
+
+  const openCreateNewEdition = (seminarId, requestId = "") => {
+    if (!seminarId) return;
+    navigate(buildCreateEditionUrl(seminarId, requestId));
   };
 
   const shareMessage = shareLink
@@ -592,7 +701,7 @@ export default function MySeminars() {
         url: shareLink,
       });
     } catch {
-      // usuario canceló o error
+      // usuario cancelÃ³ o error
     }
   };
 
@@ -613,7 +722,7 @@ export default function MySeminars() {
 
 	    const filtered = (() => {
 	      if (activeTab === "all") return enrolledSeminars;
-	      // "pending" también cubre reservas y pagos rechazados por reintentar.
+	      // "pending" tambiÃ©n cubre reservas y pagos rechazados por reintentar.
 	      return enrolledSeminars.filter((s) => {
 	        const e = enrollmentBySeminarId.get(s.id);
 	        const ps = normalizePayStatus(e?.payment_status || e?.status);
@@ -641,7 +750,7 @@ export default function MySeminars() {
               </Link>
               <div>
                 <h1 className="text-2xl font-bold text-slate-900">{t("mySeminars", "Mis seminarios")}</h1>
-                <p className="text-slate-500">{t("mySeminars_subtitle_student", "Seminarios en los que estás inscrito")}</p>
+                <p className="text-slate-500">{t("mySeminars_subtitle_student", "Seminarios en los que estÃ¡s inscrito")}</p>
               </div>
             </div>
           </div>
@@ -689,8 +798,8 @@ export default function MySeminars() {
                 <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6">
                   <Plus className="h-10 w-10 text-slate-400" />
                 </div>
-                <h3 className="text-xl font-semibold text-slate-900 mb-2">{t("mySeminars_empty_title", "Aún no estás inscrito")}</h3>
-                <p className="text-slate-500 mb-6">{t("mySeminars_empty_subtitle", "Explora seminarios y únete a uno")}</p>
+                <h3 className="text-xl font-semibold text-slate-900 mb-2">{t("mySeminars_empty_title", "AÃºn no estÃ¡s inscrito")}</h3>
+                <p className="text-slate-500 mb-6">{t("mySeminars_empty_subtitle", "Explora seminarios y Ãºnete a uno")}</p>
                 <Link to="/seminars">
                   <Button className="bg-slate-900 hover:bg-slate-800">{t("exploreSeminars", "Explorar seminarios")}</Button>
                 </Link>
@@ -723,17 +832,17 @@ export default function MySeminars() {
                   } = paymentWindow;
 
 	                  const formatWindowDate = (value) =>
-	                    value ? format(value, "PPP", { locale: dateLocale }) : "—";
+	                    value ? format(value, "PPP", { locale: dateLocale }) : "â€”";
 
                   const paymentWindowText = isPaymentWindowClosed
-                    ? t("payment_window_closed_note", "La ventana de pago cerró el {close}.").replace(
+                    ? t("payment_window_closed_note", "La ventana de pago cerrÃ³ el {close}.").replace(
                         "{close}",
                         formatWindowDate(paymentCloseDate)
                       )
                     : isPaymentOpenByCapacity
                       ? t(
                           "payment_window_full_note",
-                          "Cupos completos: los pagos ya están habilitados y cierran el {close}."
+                          "Cupos completos: los pagos ya estÃ¡n habilitados y cierran el {close}."
                         ).replace("{close}", formatWindowDate(paymentCloseDate))
                       : canPayNow
                         ? t("payment_window_open_note", "Pagos abiertos del {open} al {close}.")
@@ -741,7 +850,7 @@ export default function MySeminars() {
                             .replace("{close}", formatWindowDate(paymentCloseDate))
                         : t(
                             "payment_window_upcoming_note",
-                            "Pagos abrirán el {open} y cierran el {close}. Hasta entonces solo reservas tu cupo."
+                            "Pagos abrirÃ¡n el {open} y cierran el {close}. Hasta entonces solo reservas tu cupo."
                           )
                             .replace("{open}", formatWindowDate(paymentOpenDate))
                             .replace("{close}", formatWindowDate(paymentCloseDate));
@@ -839,7 +948,7 @@ export default function MySeminars() {
                                   <span>
                                     {seminar.start_date
                                       ? format(parseDateValue(seminar.start_date), "MMM d", { locale: dateLocale })
-                                      : "—"}
+                                      : "â€”"}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1.5">
@@ -875,7 +984,7 @@ export default function MySeminars() {
 
                                   {isPendingReviewState && (
                                     <div className="mt-4 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
-                                      {t("payment_submitted", "Pago registrado. Pendiente de validación.")}
+                                      {t("payment_submitted", "Pago registrado. Pendiente de validaciÃ³n.")}
                                     </div>
                                   )}
 
@@ -910,7 +1019,7 @@ export default function MySeminars() {
   // PROF/ADMIN MODE (como captura VIEJO derecha)
   // =========================
 
-  // Detalle “Gestionar seminario”
+  // Detalle â€œGestionar seminarioâ€
   if (selectedSeminar) {
     const seminarEnrollments = enrollmentsForCreated.filter((e) => e.seminar_id === selectedSeminar.id);
     const enrollmentCount = seminarEnrollments.length;
@@ -936,9 +1045,12 @@ export default function MySeminars() {
                         {tStatus(selectedSeminar.status, t)}
                       </Badge>
                       <Badge variant="outline">
-                        {enrollmentCount} / {selectedSeminar.max_students || "∞"} {t("students", "estudiantes")}
+                        {enrollmentCount} / {selectedSeminar.max_students || "âˆž"} {t("students", "estudiantes")}
                       </Badge>
                       <Badge variant="outline">{t("collected", "Recaudado")}: ${totalCollected.toFixed(2)}</Badge>
+                      <Badge variant="outline">
+                        {t("seminar_interest_badge", "Interesados")}: {seminarInterestRequests.length}
+                      </Badge>
                     </div>
                   </div>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:justify-end">
@@ -970,7 +1082,7 @@ export default function MySeminars() {
                     <Link to={`/seminars/${selectedSeminar.id}`} className="w-full">
                       <Button variant="outline" size="sm" className="w-full justify-start sm:justify-center">
                         <Eye className="h-4 w-4 mr-2" />
-                        {t("view_page", "Ver página")}
+                        {t("view_page", "Ver pÃ¡gina")}
                       </Button>
                     </Link>
                     <Button
@@ -998,7 +1110,7 @@ export default function MySeminars() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {seminarEnrollments.length === 0 ? (
-                  <p className="text-slate-500">{t("enrollments_empty", "Aún no hay inscripciones.")}</p>
+                  <p className="text-slate-500">{t("enrollments_empty", "AÃºn no hay inscripciones.")}</p>
                 ) : (
                   seminarEnrollments.map((e) => {
 
@@ -1019,14 +1131,14 @@ export default function MySeminars() {
                         <div className="min-w-0">
                           <p className="font-medium text-slate-900 truncate">{e.student_id}</p>
                           <p className="text-xs text-slate-500">
-                            {t("payment", "Pago")}: <b>{payLabel}</b> · {t("amount", "Monto")}:{" "}
+                            {t("payment", "Pago")}: <b>{payLabel}</b> Â· {t("amount", "Monto")}:{" "}
                             <b>${Number(e.final_price ?? e.amount_paid ?? 0).toFixed(2)}</b>
                           </p>
                         </div>
 
 
 
-                        {/* SOLO ADMIN (como tu captura “admin puede procesar pago”, prof NO) */}
+                        {/* SOLO ADMIN (como tu captura â€œadmin puede procesar pagoâ€, prof NO) */}
                         {showAdminPayBtn && (
                           <div className="flex gap-2">
                             <Link to={`/process-payment?enrollment_id=${e.id}&mode=admin`}>
@@ -1052,7 +1164,7 @@ export default function MySeminars() {
                     <p className="text-sm text-slate-500 mt-1">
                       {t(
                         "teacher_contact_directory_help",
-                        "Contacta estudiantes autorizados por email, WhatsApp o teléfono."
+                        "Contacta estudiantes autorizados por email, WhatsApp o telÃ©fono."
                       )}
                     </p>
                   </div>
@@ -1091,11 +1203,11 @@ export default function MySeminars() {
                 {contactDirectoryLoading ? (
                   <div className="flex items-center gap-3 text-slate-500 text-sm">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>{t("common_loading", "Cargando…")}</span>
+                    <span>{t("common_loading", "Cargandoâ€¦")}</span>
                   </div>
                 ) : seminarContactDirectory.length === 0 ? (
                   <p className="text-slate-500 text-sm">
-                    {t("teacher_contact_directory_empty", "Aún no hay contactos disponibles.")}
+                    {t("teacher_contact_directory_empty", "AÃºn no hay contactos disponibles.")}
                   </p>
                 ) : (
                   seminarContactDirectory.map((row) => {
@@ -1108,7 +1220,7 @@ export default function MySeminars() {
                     const whatsappLink = row.whatsapp_number
                       ? buildWhatsAppLink(
                           row.whatsapp_number,
-                          t("teacher_contact_default_message", "Hola, te escribo por tu inscripción en Okalab.")
+                          t("teacher_contact_default_message", "Hola, te escribo por tu inscripciÃ³n en Okalab.")
                         )
                       : "";
 
@@ -1169,10 +1281,10 @@ export default function MySeminars() {
                         {!contactAllowed ? (
                           <p className="text-sm text-slate-500">
                             {row.allow_teacher_contact
-                              ? t("contact_info_hidden", "Información de contacto no disponible.")
+                              ? t("contact_info_hidden", "InformaciÃ³n de contacto no disponible.")
                               : t(
                                   "contact_not_allowed",
-                                  "Este estudiante no autorizó compartir su información de contacto."
+                                  "Este estudiante no autorizÃ³ compartir su informaciÃ³n de contacto."
                                 )}
                           </p>
                         ) : null}
@@ -1183,6 +1295,147 @@ export default function MySeminars() {
               </CardContent>
             </Card>
 
+            <Card className="border-0 shadow-md">
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <CardTitle>{t("seminar_interest_title", "Interesados en nueva edicion")}</CardTitle>
+                    <p className="text-sm text-slate-500 mt-1">
+                      {t(
+                        "seminar_interest_help",
+                        "Revisa personas interesadas en reapertura o en lista de espera de este seminario."
+                      )}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 w-full sm:w-auto sm:flex sm:flex-wrap">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-start sm:w-auto sm:justify-center"
+                      onClick={() => openCreateNewEdition(selectedSeminar?.id)}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      {t("seminar_create_new_edition", "Crear nueva edicion")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-start sm:w-auto sm:justify-center"
+                      onClick={emailInterestedPeople}
+                    >
+                      <Mail className="h-4 w-4 mr-2" />
+                      {t("seminar_interest_email_all", "Email a interesados")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-start sm:w-auto sm:justify-center"
+                      onClick={exportInterestRequests}
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      {t("seminar_interest_export", "Exportar interesados")}
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {interestRequestsLoading ? (
+                  <div className="flex items-center gap-3 text-slate-500 text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>{t("common_loading", "Cargando…")}</span>
+                  </div>
+                ) : seminarInterestRequests.length === 0 ? (
+                  <p className="text-slate-500 text-sm">
+                    {t("seminar_interest_empty", "Aun no hay interesados registrados.")}
+                  </p>
+                ) : (
+                  seminarInterestRequests.map((row) => {
+                    const whatsappLink = row.phone
+                      ? buildWhatsAppLink(
+                          row.phone,
+                          t(
+                            "seminar_interest_default_message",
+                            "Hola, te escribo por tu interes en una nueva edicion del seminario en Okalab."
+                          )
+                        )
+                      : "";
+
+                    return (
+                      <div
+                        key={row.id}
+                        className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3"
+                      >
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="space-y-2 min-w-0">
+                            <p className="font-medium text-slate-900 break-words">{row.full_name}</p>
+                            <div className="flex flex-wrap gap-2 text-xs">
+                              <Badge variant="outline">
+                                {getSeminarInterestSourceLabel(row.source_type, t)}
+                              </Badge>
+                              <Badge className={getSeminarInterestStatusBadgeClass(row.status)}>
+                                {getSeminarInterestStatusLabel(row.status, t)}
+                              </Badge>
+                              <Badge variant="outline">
+                                {new Date(row.created_at).toLocaleString()}
+                              </Badge>
+                            </div>
+                            <div className="space-y-1 text-sm text-slate-600 break-words">
+                              <p>{row.email}</p>
+                              {row.phone ? <p>{row.phone}</p> : null}
+                              {row.message ? <p className="text-slate-500">{row.message}</p> : null}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2 w-full lg:w-60">
+                            <Select
+                              value={row.status || 'new'}
+                              onValueChange={(value) =>
+                                updateInterestStatusMutation.mutate({ id: row.id, status: value })
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder={t("status", "Estado")} />
+                              </SelectTrigger>
+                              <SelectContent className="bg-white">
+                                {seminarInterestStatusOptions.map((status) => (
+                                  <SelectItem key={status} value={status}>
+                                    {getSeminarInterestStatusLabel(status, t)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openCreateNewEdition(selectedSeminar?.id, row.id)}
+                              >
+                                <Plus className="h-4 w-4 mr-2" />
+                                {t("seminar_create_from_interest", "Crear edicion")}
+                              </Button>
+                              <Button variant="outline" size="sm" asChild>
+                                <a href={`mailto:${row.email}`}>
+                                  <Mail className="h-4 w-4 mr-2" />
+                                  {t("send_email", "Enviar email")}
+                                </a>
+                              </Button>
+                              {row.phone ? (
+                                <Button variant="outline" size="sm" asChild>
+                                  <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
+                                    <MessageCircle className="h-4 w-4 mr-2" />
+                                    WhatsApp
+                                  </a>
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </CardContent>
+            </Card>
             <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
               <DialogContent className="sm:max-w-md">
                 <DialogHeader>
@@ -1334,7 +1587,7 @@ export default function MySeminars() {
             <Input
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder={t("mySeminars_search", "Buscar por título o categoría...")}
+              placeholder={t("mySeminars_search", "Buscar por tÃ­tulo o categorÃ­a...")}
               className="pl-9 h-11"
             />
           </div>
@@ -1354,7 +1607,7 @@ export default function MySeminars() {
               </div>
               <h3 className="text-xl font-semibold text-slate-900 mb-2">{t("no_seminars", "No hay seminarios para mostrar")}</h3>
               <p className="text-slate-500 mb-6">
-                {isAdmin ? t("no_seminars_admin", "Aún no existen seminarios") : t("no_seminars_professor", "Crea tu primer seminario y comienza a enseñar")}
+                {isAdmin ? t("no_seminars_admin", "AÃºn no existen seminarios") : t("no_seminars_professor", "Crea tu primer seminario y comienza a enseÃ±ar")}
               </p>
               {!isAdmin && (
                 <Link to="/createseminar">
@@ -1458,7 +1711,7 @@ export default function MySeminars() {
                                 <span>
                                   {seminar.start_date
                                     ? format(parseDateValue(seminar.start_date), "MMM d", { locale: dateLocale })
-                                    : "—"}
+                                    : "â€”"}
                                 </span>
                               </div>
                               <div className="flex items-center gap-1.5">
@@ -1485,8 +1738,8 @@ export default function MySeminars() {
                                 <p className="font-bold text-blue-600">
                                   $
                                   {(() => {
-                                    // ✅ Misma regla que SeminarDetails/quote_price:
-                                    // el precio baja por inscritos HASTA target_students y luego se congela en el mínimo.
+                                    // âœ… Misma regla que SeminarDetails/quote_price:
+                                    // el precio baja por inscritos HASTA target_students y luego se congela en el mÃ­nimo.
                                     const targetIncome = Number(seminar.target_income || 0);
                                     const targetStudents = Number(seminar.target_students || 0);
 
@@ -1517,3 +1770,6 @@ export default function MySeminars() {
     </div>
   );
 }
+
+
+

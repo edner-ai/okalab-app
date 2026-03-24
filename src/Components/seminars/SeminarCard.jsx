@@ -109,6 +109,19 @@ export default function SeminarCard({
     ),
     { excess: excessSlots }
   );
+  const isCompleted = String(seminar?.status || "").toLowerCase() === "completed";
+  const isFull = computedMaxStudents > 0 && enrolledCount >= computedMaxStudents;
+  const statusBadge = isCompleted
+    ? {
+        label: t("completed", "Completado"),
+        className: "bg-purple-100 text-purple-700 border-purple-200",
+      }
+    : isFull
+      ? {
+          label: t("seminar_full_button", "Cupos llenos"),
+          className: "bg-amber-100 text-amber-800 border-amber-200",
+        }
+      : null;
 
   return (
     <motion.div
@@ -143,6 +156,14 @@ export default function SeminarCard({
           >
             {t(seminar.category, seminar.category)}
           </Badge>
+          {statusBadge ? (
+            <Badge
+              variant="outline"
+              className={`absolute right-4 top-4 border ${statusBadge.className}`}
+            >
+              {statusBadge.label}
+            </Badge>
+          ) : null}
           <div className="absolute bottom-4 left-4 right-4">
             <h3 className="line-clamp-2 text-lg font-bold text-white">{seminar.title}</h3>
           </div>

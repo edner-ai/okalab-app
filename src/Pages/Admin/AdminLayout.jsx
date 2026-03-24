@@ -12,6 +12,7 @@ import AdminEnrollments from "./AdminEnrollments";
 import AdminWallets from "./AdminWallets";
 import AdminTransactions from "./AdminTransactions";
 import AdminEarnings from "./AdminEarnings";
+import AdminInterestRequests from "./AdminInterestRequests";
 import AdminWithdrawals from "./AdminWithdrawals";
 import AdminVerifications from "./AdminVerifications";
 import PlatformSettings from "./PlatformSettings";
@@ -98,6 +99,7 @@ export default function AdminLayout() {
             <Route path="wallets" element={<AdminWallets />} />
             <Route path="transactions" element={<AdminTransactions />} />
             <Route path="earnings" element={<AdminEarnings />} />
+            <Route path="interest-requests" element={<AdminInterestRequests />} />
             <Route path="withdrawals" element={<AdminWithdrawals />} />
             <Route path="verifications" element={<AdminVerifications />} />
             <Route path="settings" element={<Navigate to="/admin/settings/app" replace />} />
