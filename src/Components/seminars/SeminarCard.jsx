@@ -110,8 +110,14 @@ export default function SeminarCard({
     { excess: excessSlots }
   );
   const isCompleted = String(seminar?.status || "").toLowerCase() === "completed";
+  const isInterestOnly = String(seminar?.status || "").toLowerCase() === "interest_only";
   const isFull = computedMaxStudents > 0 && enrolledCount >= computedMaxStudents;
-  const statusBadge = isCompleted
+  const statusBadge = isInterestOnly
+    ? {
+        label: t("seminar_interest_source_prelaunch", "Proximamente"),
+        className: "bg-sky-100 text-sky-700 border-sky-200",
+      }
+    : isCompleted
     ? {
         label: t("completed", "Completado"),
         className: "bg-purple-100 text-purple-700 border-purple-200",

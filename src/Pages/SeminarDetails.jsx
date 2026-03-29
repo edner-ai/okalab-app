@@ -38,7 +38,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../Components/ui/tabs"
 import StarRating from "../Components/reviews/StarRating";
 import PaymentWindowCountdown from "../Components/seminars/PaymentWindowCountdown";
 import LocationInfo from "../Components/seminars/LocationInfo";
-import { getSeminarInterestSourceLabel } from "../utils/seminarInterest";
+import {
+  buildInterestInviteUrl,
+  clearStoredInterestInviterRequestIdForSeminar,
+  getSeminarInterestSourceLabel,
+  getStoredInterestInviterRequestIdForSeminar,
+  getStoredInterestShareRequestIdForSeminar,
+  storeInterestInviterRequestId,
+  storeInterestShareRequestId,
+} from "../utils/seminarInterest";
 
 import {
   Calendar,
@@ -90,6 +98,15 @@ function fmtDateLong(value, lang = "es") {
   return new Intl.DateTimeFormat(locale, { year: "numeric", month: "long", day: "numeric" }).format(d);
 }
 
+function normalizeInterestEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isValidInterestEmail(value) {
+  const email = normalizeInterestEmail(value);
+  return email.includes("@") && email.includes(".");
+}
+
 export default function SeminarDetails() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -100,6 +117,7 @@ export default function SeminarDetails() {
   const location = useLocation();
   const seminarId = idFromParams || searchParams.get("id");
   const referralParam = searchParams.get("ref");
+  const interestRefParam = searchParams.get("interest_ref");
   const referralCode = referralParam || getStoredReferralCodeForSeminar(seminarId);
 
   const [showEnrollDialog, setShowEnrollDialog] = useState(false);
@@ -114,6 +132,7 @@ export default function SeminarDetails() {
     phone: "",
     message: "",
   });
+  const [ownInterestRequestId, setOwnInterestRequestId] = useState("");
 
   const { user, profile, contactProfileComplete } = useAuth();
   const residenceCountryCode = normalizeCountryCode(profile?.country_code);
@@ -146,6 +165,19 @@ export default function SeminarDetails() {
     });
   }, [seminarId, referralCode, location.pathname, location.search]);
 
+  useEffect(() => {
+    if (!seminarId) return;
+    setOwnInterestRequestId(getStoredInterestShareRequestIdForSeminar(seminarId) || "");
+  }, [seminarId]);
+
+  useEffect(() => {
+    if (!seminarId || !interestRefParam) return;
+    storeInterestInviterRequestId({
+      seminarId,
+      requestId: interestRefParam,
+    });
+  }, [seminarId, interestRefParam]);
+
   // 1) Seminar
   const { data: seminar, isLoading } = useQuery({
     queryKey: ["seminar", seminarId],
@@ -173,7 +205,7 @@ export default function SeminarDetails() {
 
       if (error) throw error;
 
-      // “Activos”: si tuvieras cancelled, lo excluimos
+      // "Activos": si tuvieras cancelled, lo excluimos
       return (data || []).filter((e) => (e.status || e.payment_status) !== "cancelled");
     },
     enabled: !!seminarId,
@@ -205,6 +237,7 @@ export default function SeminarDetails() {
 
   const maxStudents = Number(seminar?.max_students || 0);
   const isFull = Number.isFinite(maxStudents) && maxStudents > 0 && enrollmentCount >= maxStudents;
+  const isInterestOnly = String(seminar?.status || "").toLowerCase() === "interest_only";
   const isCompleted = String(seminar?.status || "").toLowerCase() === "completed";
   const seminarStartDate = useMemo(() => {
     if (!seminar?.start_date) return null;
@@ -291,13 +324,69 @@ export default function SeminarDetails() {
   const isOwner = !!user && (seminar?.professor_id === user.id || seminar?.instructor_id === user.id);
   const isOwnerProfessor = isOwner && (role === "professor" || role === "teacher" || role === "" || role === "instructor");
   const professorProfileId = seminar?.professor_id || seminar?.instructor_id || null;
-  const interestSourceType = isCompleted ? "completed" : isFull ? "full" : null;
+  const interestSourceType = isInterestOnly ? "prelaunch" : isCompleted ? "completed" : isFull ? "full" : null;
+  const accountInterestEmail = useMemo(
+    () => normalizeInterestEmail(user?.email || profile?.email),
+    [profile?.email, user?.email]
+  );
+  const dialogInterestEmail = useMemo(
+    () => normalizeInterestEmail(interestForm.email),
+    [interestForm.email]
+  );
+
+  const fetchExistingInterestRequest = async (email) => {
+    const normalizedEmail = normalizeInterestEmail(email);
+    if (!seminarId || !interestSourceType || !isValidInterestEmail(normalizedEmail)) {
+      return null;
+    }
+
+    const { data, error } = await supabase.rpc("get_seminar_interest_request_status", {
+      p_seminar_id: seminarId,
+      p_email: normalizedEmail,
+    });
+
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row ?? null;
+  };
+
+  const { data: accountInterestRequest = null } = useQuery({
+    queryKey: ["seminar-interest-request-status", seminarId, accountInterestEmail],
+    enabled: !!seminarId && !!interestSourceType && isValidInterestEmail(accountInterestEmail),
+    queryFn: () => fetchExistingInterestRequest(accountInterestEmail),
+    staleTime: 1000 * 30,
+    refetchOnMount: "always",
+  });
+
+  const { data: dialogInterestRequest = null, isFetching: isCheckingDialogInterestRequest } = useQuery({
+    queryKey: ["seminar-interest-request-status", seminarId, dialogInterestEmail],
+    enabled:
+      showInterestDialog &&
+      !!seminarId &&
+      !!interestSourceType &&
+      isValidInterestEmail(dialogInterestEmail) &&
+      dialogInterestEmail !== accountInterestEmail,
+    queryFn: () => fetchExistingInterestRequest(dialogInterestEmail),
+    staleTime: 1000 * 30,
+  });
+
   const canRequestInterest =
     !!seminar &&
     !userEnrollment &&
     !isOwnerProfessor &&
     !isAdmin &&
     !!interestSourceType;
+  const interestInviterRequestId =
+    interestRefParam || getStoredInterestInviterRequestIdForSeminar(seminarId);
+  const resolvedInterestRequestId =
+    ownInterestRequestId || accountInterestRequest?.request_id || "";
+  const dialogExistingInterestRequest =
+    dialogInterestEmail && dialogInterestEmail === accountInterestEmail
+      ? accountInterestRequest
+      : dialogInterestRequest;
+  const canShareInterestDemand =
+    interestSourceType === "prelaunch" && !!resolvedInterestRequestId && !isOwnerProfessor && !isAdmin;
+  const hasRegisteredInterest = !!resolvedInterestRequestId;
   const interestDefaultForm = useMemo(
     () => ({
       full_name: profile?.full_name || "",
@@ -402,6 +491,7 @@ export default function SeminarDetails() {
       userEnrollment ||
       isOwner ||
       isAdmin ||
+      isInterestOnly ||
       isFull ||
       isEnded ||
       isEnrollClosedForPayments
@@ -418,6 +508,7 @@ export default function SeminarDetails() {
     userEnrollment,
     isOwner,
     isAdmin,
+    isInterestOnly,
     isFull,
     isEnded,
     isEnrollClosedForPayments,
@@ -451,7 +542,7 @@ export default function SeminarDetails() {
 
   const targetReached = enrollmentCount >= targetStudents; // inscritos >= objetivo
 
-  // Precio si entra +1 estudiante (para el aviso “Con +1 estudiante”)
+  // Precio si entra +1 estudiante (para el aviso "Con +1 estudiante")
   const nextPrice =
     targetIncome > 0
       ? (targetReached ? minPrice : targetIncome / Math.min(targetStudents, Math.max(1, enrollmentCount + 1)))
@@ -464,23 +555,27 @@ export default function SeminarDetails() {
   const discountText = t("discount_pct", "{pct}% de descuento").replace(/\{\s*pct\s*\}/gi, savings);
 
   
-const paymentWindowNote = isPaymentWindowClosed
-    ? t("payment_window_closed_note", "La ventana de pago cerró el {close}.")
-    : isPaymentOpenByCapacity
-      ? t(
-          "payment_window_full_note",
-          "Cupos completos: los pagos ya están habilitados y cierran el {close}."
-        )
-      : canPayNow
-        ? t("payment_window_open_note", "Pagos abiertos del {open} al {close}. Inscripciones cerradas.")
-        : t(
-            "payment_window_upcoming_note",
-            "Pagos abrirán el {open} y cierran el {close}. Hasta entonces solo reservas tu cupo."
-          );
-
+const paymentWindowNote = isInterestOnly
+    ? t(
+        "seminar_interest_only_payment_window_help",
+        "Mientras solo captes interesados no se habilitan inscripciones, pagos ni bonos. Define fechas para abrir el flujo normal."
+      )
+    : isPaymentWindowClosed
+      ? t("payment_window_closed_note", "La ventana de pago cerro el {close}.")
+      : isPaymentOpenByCapacity
+        ? t(
+            "payment_window_full_note",
+            "Cupos completos: los pagos ya estan habilitados y cierran el {close}."
+          )
+        : canPayNow
+          ? t("payment_window_open_note", "Pagos abiertos del {open} al {close}. Inscripciones cerradas.")
+          : t(
+              "payment_window_upcoming_note",
+              "Pagos abriran el {open} y cierran el {close}. Hasta entonces solo reservas tu cupo."
+            );
   const paymentWindowNoteText = paymentWindowNote
-    .replace("{open}", paymentOpenDate ? fmtDateLong(paymentOpenDate, language) : "—")
-    .replace("{close}", paymentCloseDate ? fmtDateLong(paymentCloseDate, language) : "—");
+    .replace("{open}", paymentOpenDate ? fmtDateLong(paymentOpenDate, language) : "-")
+    .replace("{close}", paymentCloseDate ? fmtDateLong(paymentCloseDate, language) : "-");
 
 const minPriceGoalText = useMemo(() => {
     const raw = t(
@@ -493,7 +588,7 @@ const minPriceGoalText = useMemo(() => {
 
 // --- Regla de pago: pagar si el seminario llenó cupo o si ya abrió la ventana ---
 const payStatus = (userEnrollment?.payment_status || userEnrollment?.status || "").toLowerCase();
-// ÚNICA FUENTE de pago: payment_status. Estados pagables: unpaid / rejected
+// UNICA FUENTE de pago: payment_status. Estados pagables: unpaid / rejected
 const isPayableStatus = payStatus === "unpaid" || payStatus === "rejected";
 const isEnrollmentPaid = payStatus === "paid";
 const materialsAccessMode = seminar?.materials_access_mode || "start_date";
@@ -552,19 +647,27 @@ const { data: seminarMaterials = [], isLoading: materialsLoading } = useQuery({
   staleTime: 1000 * 60 * 5,
 });
 
-  // Bloque “modelo económico” como Base44
+  // Bloque "modelo economico" como Base44
   const platformFee = targetIncome * (platformFeePercent / 100);
   const professorNet = targetIncome - platformFee;
 
   const enrollMutation = useMutation({
-    mutationFn: async () => {
-      if (!user) {
-        const nextUrl = `${location.pathname}${location.search || ""}`;
-        navigate(`/login?next=${encodeURIComponent(nextUrl)}`);
-        return null;
-      }
-      if (!contactProfileComplete) {
-        navigate(buildContactOnboardingUrl(`${location.pathname}${location.search || ""}`));
+	    mutationFn: async () => {
+	      if (!user) {
+	        const nextUrl = `${location.pathname}${location.search || ""}`;
+	        navigate(`/login?next=${encodeURIComponent(nextUrl)}`);
+	        return null;
+	      }
+	      if (isInterestOnly) {
+	        throw new Error(
+	          t(
+	            "seminar_interest_only_payment_window_help",
+	            "Mientras solo captes interesados no se habilitan inscripciones, pagos ni bonos. Define fechas para abrir el flujo normal."
+	          )
+	        );
+	      }
+	      if (!contactProfileComplete) {
+	        navigate(buildContactOnboardingUrl(`${location.pathname}${location.search || ""}`));
         throw new Error(
           t(
             "contact_profile_required_enroll",
@@ -614,9 +717,9 @@ const enrollmentPayload = {
   student_id: user.id,
   student_email: user.email,
 
-  // 🔑 Estados definitivos
+  // Estados definitivos
   status: "enrolled",        // solo UI / funcional
-  payment_status: "unpaid",  // ÚNICA verdad de pago
+  payment_status: "unpaid",  // UNICA verdad de pago
 
   invited_by_email: invitedByEmail || null,
 };
@@ -692,7 +795,6 @@ if (error) {
       if (!seminarId || !interestSourceType) {
         throw new Error(t("seminar_interest_unavailable", "Esta solicitud no esta disponible para este seminario."));
       }
-
       const fullName = String(interestForm.full_name || "").trim();
       const email = String(interestForm.email || "").trim().toLowerCase();
 
@@ -704,7 +806,15 @@ if (error) {
         throw new Error(t("seminar_interest_email_required", "Tu correo es obligatorio."));
       }
 
-      const { error } = await supabase.rpc("submit_seminar_interest_request", {
+      const existingRequest = await fetchExistingInterestRequest(email);
+      if (existingRequest?.request_id) {
+        return {
+          requestId: existingRequest.request_id,
+          alreadyExisted: true,
+        };
+      }
+
+      const { data: requestId, error } = await supabase.rpc("submit_seminar_interest_request", {
         p_seminar_id: seminarId,
         p_full_name: fullName,
         p_email: email,
@@ -713,19 +823,42 @@ if (error) {
         p_preferred_language: language || null,
         p_message: interestForm.message || null,
         p_source_type: interestSourceType,
+        p_invited_by_request_id:
+          interestSourceType === "prelaunch" ? interestInviterRequestId || null : null,
       });
 
       if (error) throw error;
-      return true;
+      return {
+        requestId: requestId || null,
+        alreadyExisted: false,
+      };
     },
-    onSuccess: () => {
+    onSuccess: ({ requestId, alreadyExisted }) => {
       setShowInterestDialog(false);
+      if (requestId) {
+        setOwnInterestRequestId(requestId);
+        storeInterestShareRequestId({ seminarId, requestId });
+      }
+      clearStoredInterestInviterRequestIdForSeminar(seminarId);
       toast.success(
-        t(
-          "seminar_interest_success",
-          "Tu solicitud fue registrada. El profesor o el equipo de Okalab podran contactarte si se abre una nueva edicion."
-        )
+        alreadyExisted
+          ? t(
+              "seminar_interest_already_registered",
+              "Ya registraste tu interes en este seminario."
+            )
+          : interestSourceType === "prelaunch"
+            ? t(
+                "seminar_interest_success_with_invite",
+                "Tu solicitud fue registrada. Ahora tambien puedes invitar a otras personas interesadas para ayudar a que este seminario abra inscripciones."
+              )
+            : t(
+                "seminar_interest_success",
+                "Tu solicitud fue registrada. El profesor o el equipo de Okalab podran contactarte si este seminario abre inscripciones o si se publica una nueva edicion."
+              )
       );
+      if (interestSourceType === "prelaunch" && requestId) {
+        setShowShareDialog(true);
+      }
     },
     onError: (err) => {
       toast.error(
@@ -747,30 +880,48 @@ if (error) {
 
   const shareUrl = useMemo(() => {
     const base = buildPublicAppUrl(`/seminars/${seminarId}`);
+    if (interestSourceType === "prelaunch" && resolvedInterestRequestId) {
+      return buildPublicAppUrl(buildInterestInviteUrl(seminarId, resolvedInterestRequestId));
+    }
     if (userEnrollment?.id) return `${base}?ref=${userEnrollment.id}`;
     return base;
-  }, [seminarId, userEnrollment?.id]);
+  }, [seminarId, resolvedInterestRequestId, interestSourceType, userEnrollment?.id]);
 
   const interestSourceLabel = interestSourceType
     ? getSeminarInterestSourceLabel(interestSourceType, t)
     : "";
-  const interestDialogTitle = isCompleted
-    ? t("seminar_interest_reopen_title", "Solicitar reapertura")
-    : t("seminar_interest_full_title", "Unirme a la lista de interes");
-  const interestDialogDescription = isCompleted
-    ? t(
-        "seminar_interest_completed_note",
-        "Este seminario ya finalizo, pero puedes dejar tus datos para una nueva edicion."
-      )
-    : t(
-        "seminar_interest_full_note",
-        "Este seminario ya lleno sus cupos. Deja tus datos para avisarte si se abre una nueva edicion."
-      );
+  const interestDialogTitle =
+    interestSourceType === "prelaunch"
+      ? t("seminar_interest_prelaunch_title", "Solicitar apertura")
+      : isCompleted
+        ? t("seminar_interest_reopen_title", "Solicitar reapertura")
+        : t("seminar_interest_full_title", "Unirme a la lista de interes");
+  const interestDialogDescription =
+    interestSourceType === "prelaunch"
+      ? t(
+          "seminar_interest_prelaunch_note",
+          "Este seminario aun no tiene fechas definidas. Deja tus datos para que te avisen cuando abra inscripciones."
+        )
+      : isCompleted
+        ? t(
+            "seminar_interest_completed_note",
+            "Este seminario ya finalizo, pero puedes dejar tus datos para una nueva edicion."
+          )
+        : t(
+            "seminar_interest_full_note",
+            "Este seminario ya lleno sus cupos. Deja tus datos para avisarte si se abre una nueva edicion."
+          );
 
   const shareMessage = useMemo(() => {
-    const msg = t("share_message", "Mira este seminario en Okalab:");
+    const msg =
+      interestSourceType === "prelaunch"
+        ? t(
+            "seminar_interest_share_message",
+            "Me interesa este seminario en Okalab. Si a ti tambien te interesa, solicita apertura aqui:"
+          )
+        : t("share_message", "Mira este seminario en Okalab:");
     return `${msg}\n${shareUrl}`;
-  }, [shareUrl, t]);
+  }, [shareUrl, interestSourceType, t]);
 
   const waShare = useMemo(
     () => `https://wa.me/?text=${encodeURIComponent(shareMessage)}`,
@@ -913,7 +1064,7 @@ if (error) {
                   <Clock className="h-6 w-6 mx-auto mb-2 text-purple-600" />
                   <p className="text-xs text-slate-500">{t("duration", "Duración")}</p>
                   <p className="font-semibold">
-                    {seminar.total_hours ? `${seminar.total_hours} ${t("hours", "horas")}` : "—"}
+                    {seminar.total_hours ? `${seminar.total_hours} ${t("hours", "horas")}` : "-"}
                   </p>
                 </CardContent>
               </Card>
@@ -922,7 +1073,7 @@ if (error) {
                 <CardContent className="p-4 text-center">
                   <ModalityIcon className="h-6 w-6 mx-auto mb-2 text-emerald-600" />
                   <p className="text-xs text-slate-500">{t("modality", "Modalidad")}</p>
-                  <p className="font-semibold capitalize">{seminar.modality ? t(seminar.modality, seminar.modality) : "—"}</p>
+                  <p className="font-semibold capitalize">{seminar.modality ? t(seminar.modality, seminar.modality) : "-"}</p>
                 </CardContent>
               </Card>
 
@@ -1258,9 +1409,9 @@ if (error) {
                 {(isOwnerProfessor || isAdmin) ? (
                   <ul className="text-xs text-slate-500 space-y-1">
                     <li>
-                      • {t("professor_receives", "Profesor recibe")}: ${professorNet.toFixed(2)} ({t("after_fee", "después de")} {platformFeePercent}% {t("fee_commission", "comisión")})
+                      - {t("professor_receives", "Profesor recibe")}: ${professorNet.toFixed(2)} ({t("after_fee", "despues de")} {platformFeePercent}% {t("fee_commission", "comision")})
                     </li>
-                    <li>• {t("platformFee", "Comisión plataforma")}: ${platformFee.toFixed(2)}</li>
+                    <li>- {t("platformFee", "Comision plataforma")}: ${platformFee.toFixed(2)}</li>
                   </ul>
                 ) : null}
               </CardContent>
@@ -1269,41 +1420,51 @@ if (error) {
             {/* Pricing Card (igual Base44) */}
             <Card className="border-0 shadow-xl sticky top-24">
               <CardContent className="p-6 space-y-6">
-                <div className="text-center">
-                  <p className="text-sm text-slate-500">{t("price_estimated_now", "Precio estimado si pagas ahora")}</p>
-                  <p className="text-4xl font-bold text-slate-900 mt-1">
-                    ${estimatedPriceNow.toFixed(2)}
-                  </p>
-                  <LocalCurrencyReference
-                    usdAmount={estimatedPriceNow}
-                    countryCode={residenceCountryCode}
-                    settings={platformSettings}
-                    language={language}
-                    t={t}
-                    className="mt-4 text-left"
-                  />
-                  {user && !residenceCountryCode ? (
-                    <p className="mt-3 text-xs text-slate-500">
-                      {t(
-                        "seminar_country_hint",
-                        "Selecciona tu pais de residencia en tu perfil para ver la referencia en tu moneda y los metodos de pago correctos."
-                      )}
-                    </p>
-                  ) : null}
+	                <div className="text-center">
+	                  <p className="text-sm text-slate-500">
+	                    {isInterestOnly
+	                      ? t("interest_only", "Captando interesados")
+	                      : t("price_estimated_now", "Precio estimado si pagas ahora")}
+	                  </p>
+	                  <p className="text-4xl font-bold text-slate-900 mt-1">
+	                    {isInterestOnly
+	                      ? t("seminar_interest_only_date_tbd", "Fecha por definir")
+	                      : `$${estimatedPriceNow.toFixed(2)}`}
+	                  </p>
+	                  {!isInterestOnly ? (
+	                    <>
+	                      <LocalCurrencyReference
+	                        usdAmount={estimatedPriceNow}
+	                        countryCode={residenceCountryCode}
+	                        settings={platformSettings}
+	                        language={language}
+	                        t={t}
+	                        className="mt-4 text-left"
+	                      />
+	                      {user && !residenceCountryCode ? (
+	                        <p className="mt-3 text-xs text-slate-500">
+	                          {t(
+	                            "seminar_country_hint",
+	                            "Selecciona tu pais de residencia en tu perfil para ver la referencia en tu moneda y los metodos de pago correctos."
+	                          )}
+	                        </p>
+	                      ) : null}
 
-                  {targetIncome > 0 && (
-                    <Badge variant="secondary" className="mt-2 bg-emerald-100 text-emerald-700">
-                      <TrendingDown className="h-3 w-3 mr-1" />
-                      {discountText}
-                    </Badge>
-                  )}
-                </div>
+	                      {targetIncome > 0 && (
+	                        <Badge variant="secondary" className="mt-2 bg-emerald-100 text-emerald-700">
+	                          <TrendingDown className="h-3 w-3 mr-1" />
+	                          {discountText}
+	                        </Badge>
+	                      )}
+	                    </>
+	                  ) : null}
+	                </div>
 
 	                <div className="p-3 bg-amber-50 rounded-xl text-sm text-amber-900">
 	                  {paymentWindowNoteText}
 	                </div>
 
-                  {(paymentOpenDate || paymentCloseDate) && !isPaymentWindowClosed ? (
+                  {!isInterestOnly && (paymentOpenDate || paymentCloseDate) && !isPaymentWindowClosed ? (
                     <PaymentWindowCountdown
                       targetDate={canPayNow ? paymentCloseDate : paymentOpenDate}
                       mode={canPayNow ? "close" : "open"}
@@ -1344,7 +1505,12 @@ if (error) {
                   )}
 
                   <p className="text-xs text-slate-500">
-                    {t("priceExplanation", "Mientras más estudiantes se inscriban, menor será el precio para cada uno.")}
+                    {isInterestOnly
+                      ? t(
+                          "seminar_interest_only_capacity_note",
+                          "Muestra tu objetivo y capacidad para captar demanda antes de fijar calendario."
+                        )
+                      : t("priceExplanation", "Mientras mas estudiantes se inscriban, menor sera el precio para cada uno.")}
                   </p>
                 </div>
 
@@ -1404,7 +1570,7 @@ if (error) {
                           >
                             {t("payment_available_on", "Pagar disponible el {date}").replace(
                               "{date}",
-                              paymentOpenDate ? fmtDateLong(paymentOpenDate, language) : "—"
+                              paymentOpenDate ? fmtDateLong(paymentOpenDate, language) : "-"
                             )}
                           </Button>
                         )}
@@ -1414,7 +1580,7 @@ if (error) {
                             <div className="p-4 bg-amber-50 rounded-xl text-amber-900 text-sm">
                               {t("payment_window_closed_note", "La ventana de pago cerró el {close}.").replace(
                                 "{close}",
-                                paymentCloseDate ? fmtDateLong(paymentCloseDate, language) : "—"
+                                paymentCloseDate ? fmtDateLong(paymentCloseDate, language) : "-"
                               )}
                             </div>
                             <Button
@@ -1447,7 +1613,27 @@ if (error) {
                 ) : canRequestInterest ? (
                   <div className="space-y-3">
                     <div className="p-4 bg-amber-50 rounded-xl text-amber-900 text-sm">
-                      {isCompleted
+                      {hasRegisteredInterest
+                        ? interestSourceType === "prelaunch"
+                          ? t(
+                              "seminar_interest_prelaunch_registered_note",
+                              "Ya registraste tu interes en este seminario. Ahora puedes invitar a otras personas interesadas para ayudar a que abra inscripciones."
+                            )
+                          : isCompleted
+                            ? t(
+                                "seminar_interest_completed_registered_note",
+                                "Ya solicitaste una nueva edicion de este seminario. Te contactaran si se reabre."
+                              )
+                            : t(
+                                "seminar_interest_full_registered_note",
+                                "Ya te uniste a la lista de interes de este seminario. Te contactaran si se libera o abre una nueva edicion."
+                              )
+                        : interestSourceType === "prelaunch"
+                        ? t(
+                            "seminar_interest_prelaunch_public_note",
+                            "Este seminario se esta mostrando para captar interesados. Deja tus datos y te avisaremos cuando abra inscripciones."
+                          )
+                        : isCompleted
                         ? t(
                             "seminar_interest_completed_public_note",
                             "Este seminario ya finalizo. Puedes dejar tus datos para solicitar una nueva edicion."
@@ -1457,14 +1643,43 @@ if (error) {
                             "Los cupos ya se llenaron. Puedes dejar tus datos para que te contacten si se reabre."
                           )}
                     </div>
-                    <Button
-                      onClick={() => setShowInterestDialog(true)}
-                      className="w-full h-12 bg-slate-900 hover:bg-slate-800 text-base"
-                    >
-                      {isCompleted
-                        ? t("seminar_request_reopen", "Solicitar reapertura")
-                        : t("seminar_join_interest_list", "Unirme a la lista de interes")}
-                    </Button>
+                    {hasRegisteredInterest ? (
+                      <Button
+                        disabled
+                        className="w-full h-12 bg-slate-400 text-white cursor-not-allowed text-base"
+                      >
+                        {t("seminar_interest_registered_button", "Solicitud registrada")}
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={() => setShowInterestDialog(true)}
+                        className="w-full h-12 bg-slate-900 hover:bg-slate-800 text-base"
+                      >
+                        {interestSourceType === "prelaunch"
+                          ? t("seminar_request_opening", "Solicitar apertura")
+                          : isCompleted
+                          ? t("seminar_request_reopen", "Solicitar reapertura")
+                          : t("seminar_join_interest_list", "Unirme a la lista de interes")}
+                      </Button>
+                    )}
+                    {interestSourceType === "prelaunch" && canShareInterestDemand ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => setShowShareDialog(true)}
+                        className="w-full h-12 text-base"
+                      >
+                        <Share2 className="h-4 w-4 mr-2" />
+                        {t("seminar_interest_invite_friends", "Invitar amigos")}
+                      </Button>
+                    ) : null}
+                    {interestSourceType === "prelaunch" && !canShareInterestDemand ? (
+                      <p className="text-xs text-slate-500 text-center">
+                        {t(
+                          "seminar_interest_invite_after_request",
+                          "Despues de solicitar apertura podras invitar a otras personas interesadas."
+                        )}
+                      </p>
+                    ) : null}
                   </div>
                 ) : isEnded ? (
                   <div className="space-y-3">
@@ -1520,7 +1735,7 @@ if (error) {
                   </Button>
                 )}
 
-                {enrollmentCount > 0 && targetIncome > 0 && !targetReached && (
+                {enrollmentCount > 0 && targetIncome > 0 && !targetReached && !isInterestOnly && (
                   <div className="text-center text-sm text-slate-500">
                     {t("next_price_with_one", "Con +1 estudiante:")}{" "}
                     <span className="font-medium text-emerald-600">
@@ -1652,6 +1867,23 @@ if (error) {
                 }
                 placeholder={t("seminar_interest_email", "Correo electronico")}
               />
+              {showInterestDialog && isValidInterestEmail(dialogInterestEmail) ? (
+                isCheckingDialogInterestRequest ? (
+                  <p className="text-xs text-slate-500">
+                    {t(
+                      "seminar_interest_lookup_checking",
+                      "Verificando si este correo ya registro interes..."
+                    )}
+                  </p>
+                ) : dialogExistingInterestRequest?.request_id ? (
+                  <p className="text-xs text-amber-700">
+                    {t(
+                      "seminar_interest_lookup_note",
+                      "Ya existe una solicitud registrada con este correo para este seminario."
+                    )}
+                  </p>
+                ) : null
+              ) : null}
               <Input
                 value={interestForm.phone}
                 onChange={(e) =>
@@ -1679,15 +1911,36 @@ if (error) {
             </Button>
             <Button
               onClick={() => interestRequestMutation.mutate()}
-              disabled={interestRequestMutation.isPending}
+              disabled={interestRequestMutation.isPending || !!dialogExistingInterestRequest?.request_id}
               className="bg-slate-900 hover:bg-slate-800"
             >
               {interestRequestMutation.isPending
                 ? t("common_processing", "Procesando...")
+                : dialogExistingInterestRequest?.request_id
+                  ? t("seminar_interest_registered_button", "Solicitud registrada")
+                : interestSourceType === "prelaunch"
+                  ? t("seminar_request_opening", "Solicitar apertura")
                 : isCompleted
                   ? t("seminar_request_reopen", "Solicitar reapertura")
                   : t("seminar_join_interest_list", "Unirme a la lista de interes")}
             </Button>
+            {interestSourceType === "prelaunch" && dialogExistingInterestRequest?.request_id ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setOwnInterestRequestId(dialogExistingInterestRequest.request_id);
+                  storeInterestShareRequestId({
+                    seminarId,
+                    requestId: dialogExistingInterestRequest.request_id,
+                  });
+                  setShowInterestDialog(false);
+                  setShowShareDialog(true);
+                }}
+              >
+                <Share2 className="h-4 w-4 mr-2" />
+                {t("seminar_interest_invite_friends", "Invitar amigos")}
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1754,12 +2007,24 @@ if (error) {
       <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{t("invite", "Invitar")}</DialogTitle>
+            <DialogTitle>
+              {interestSourceType === "prelaunch"
+                ? t("seminar_interest_invite_friends", "Invitar amigos")
+                : t("invite", "Invitar")}
+            </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
             <p className="text-slate-600">
-              {t("share_link_note", "Comparte este enlace. Tu invitación ayudará a bajar el precio y luego podrás ganar incentivos.")}
+              {interestSourceType === "prelaunch"
+                ? t(
+                    "seminar_interest_share_note",
+                    "Comparte este enlace para sumar personas interesadas. Los bonos economicos solo aplican cuando el seminario abra inscripciones y se cumplan las condiciones normales."
+                  )
+                : t(
+                    "share_link_note",
+                    "Comparte este enlace. Tu invitacion ayudara a bajar el precio y luego podras ganar incentivos."
+                  )}
             </p>
 
             <div className="flex gap-2">
@@ -1804,4 +2069,5 @@ if (error) {
     </div>
   );
 }
+
 

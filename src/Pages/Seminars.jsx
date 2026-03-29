@@ -28,12 +28,17 @@ function SeminarsContent() {
       const { data, error } = await supabase
         .from('seminars')
         .select('id,title,description,image_url,category,modality,start_date,total_hours,target_income,target_students,excess_students,max_students,price,status,created_at,language')
-        .in('status', ['published', 'completed'])
+        .in('status', ['published', 'interest_only', 'completed'])
         .order('created_at', { ascending: false });
       if (error) throw error;
       return (data || []).sort((a, b) => {
-        const weightA = a.status === 'published' ? 0 : 1;
-        const weightB = b.status === 'published' ? 0 : 1;
+        const getWeight = (status) => {
+          if (status === 'published') return 0;
+          if (status === 'interest_only') return 1;
+          return 2;
+        };
+        const weightA = getWeight(a.status);
+        const weightB = getWeight(b.status);
         if (weightA !== weightB) return weightA - weightB;
         return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
       });

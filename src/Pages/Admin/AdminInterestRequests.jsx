@@ -17,8 +17,9 @@ import { Badge } from "../../Components/ui/badge";
 import { Search, SlidersHorizontal, Loader2, Mail, MessageCircle, Plus } from "lucide-react";
 import { useLanguage } from "../../Components/shared/LanguageContext";
 import {
-  buildCreateEditionUrl,
+  buildSeminarInterestActionUrl,
   getSeminarInterestSourceLabel,
+  getSeminarInterestActionLabel,
   getSeminarInterestStatusBadgeClass,
   getSeminarInterestStatusLabel,
   seminarInterestStatusOptions,
@@ -151,7 +152,7 @@ export default function AdminInterestRequests() {
         <p className="text-slate-500 text-sm">
           {t(
             "admin_interest_requests_subtitle",
-            "Solicitudes publicas para reapertura o lista de espera de seminarios llenos y completados."
+            "Solicitudes publicas para apertura, reapertura o lista de espera de seminarios."
           )}
         </p>
       </div>
@@ -206,6 +207,7 @@ export default function AdminInterestRequests() {
               </SelectTrigger>
               <SelectContent className="bg-white">
                 <SelectItem value="all">{t("admin_interest_source_all", "Todos los origenes")}</SelectItem>
+                <SelectItem value="prelaunch">{t("seminar_interest_source_prelaunch", "Proximamente")}</SelectItem>
                 <SelectItem value="full">{t("seminar_interest_source_full", "Cupos llenos")}</SelectItem>
                 <SelectItem value="completed">{t("seminar_interest_source_completed", "Seminario completado")}</SelectItem>
               </SelectContent>
@@ -275,6 +277,11 @@ export default function AdminInterestRequests() {
                             <p className="font-medium text-slate-900">{row.full_name}</p>
                             <p className="text-xs text-slate-500">{row.email}</p>
                             {row.phone ? <p className="text-xs text-slate-500">{row.phone}</p> : null}
+                            {row.invited_by_email ? (
+                              <p className="text-xs text-slate-500">
+                                {t("seminar_interest_invited_by", "Invitado por")}: {row.invited_by_email}
+                              </p>
+                            ) : null}
                           </div>
                         </TableCell>
                         <TableCell>{row.seminarTitle}</TableCell>
@@ -313,10 +320,12 @@ export default function AdminInterestRequests() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => navigate(buildCreateEditionUrl(row.seminar_id, row.id))}
+                              onClick={() =>
+                                navigate(buildSeminarInterestActionUrl(row.seminar_id, row.source_type, row.id))
+                              }
                             >
                               <Plus className="h-4 w-4 mr-2" />
-                              {t("seminar_create_from_interest", "Crear edición")}
+                              {getSeminarInterestActionLabel(row.source_type, t)}
                             </Button>
                             <Button variant="outline" size="sm" asChild>
                               <a href={`mailto:${row.email}`}>

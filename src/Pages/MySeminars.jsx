@@ -56,8 +56,9 @@ import { buildWhatsAppLink } from "../utils/contactProfile";
 import { parseDateValue } from "../utils/dateValue";
 import { resolvePaymentWindow } from "../utils/paymentWindow";
 import {
-  buildCreateEditionUrl,
+  buildSeminarInterestActionUrl,
   getSeminarInterestSourceLabel,
+  getSeminarInterestActionLabel,
   getSeminarInterestStatusBadgeClass,
   getSeminarInterestStatusLabel,
   seminarInterestStatusOptions,
@@ -76,6 +77,7 @@ import PaymentWindowCountdown from "../Components/seminars/PaymentWindowCountdow
 
 const statusColors = {
   draft: "bg-slate-100 text-slate-700",
+  interest_only: "bg-amber-100 text-amber-800",
   published: "bg-emerald-100 text-emerald-700",
   in_progress: "bg-blue-100 text-blue-700",
   completed: "bg-purple-100 text-purple-700",
@@ -108,6 +110,7 @@ function tStatus(status, t) {
   const map = {
     all: t?.("all", "Todos") ?? "Todos",
     draft: t?.("draft", "Borrador") ?? "Borrador",
+    interest_only: t?.("interest_only", "Captando interesados") ?? "Captando interesados",
     published: t?.("published", "Publicado") ?? "Publicado",
     in_progress: t?.("in_progress", "En progreso") ?? "En progreso",
     completed: t?.("completed", "Completado") ?? "Completado",
@@ -147,6 +150,7 @@ export default function MySeminars() {
   const [shareTitle, setShareTitle] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
   const [seminarPendingCompletion, setSeminarPendingCompletion] = useState(null);
+  const [seminarPendingDeletion, setSeminarPendingDeletion] = useState(null);
   const walletShortcutHandledRef = useRef(false);
 
   // -------- PROF/ADMIN: seminarios creados --------
@@ -432,8 +436,24 @@ export default function MySeminars() {
       queryClient.invalidateQueries({ queryKey: ["my-seminars-created"] });
       toast.success(t("seminar_deleted", "Seminario eliminado"));
       setSelectedSeminar(null);
+      setSeminarPendingDeletion(null);
     },
-    onError: (e) => toast.error(e?.message || t("seminar_delete_error", "No se pudo eliminar")),
+    onError: (e) => {
+      setSeminarPendingDeletion(null);
+      const message = String(e?.message || "");
+      const isHistoryConstraint =
+        message.includes("wallet_transactions_seminar_id_fkey") ||
+        message.includes("violates foreign key constraint");
+
+      toast.error(
+        isHistoryConstraint
+          ? t(
+              "seminar_delete_has_history_error",
+              "No puedes eliminar este seminario porque ya tiene inscripciones, pagos o movimientos de billetera asociados."
+            )
+          : e?.message || t("seminar_delete_error", "No se pudo eliminar")
+      );
+    },
   });
 
   const updateStatusMutation = useMutation({
@@ -460,6 +480,35 @@ export default function MySeminars() {
       return;
     }
     setSeminarPendingCompletion(seminar);
+  };
+
+  const getDeleteGate = (seminar) => {
+    const enrollmentCount = getEnrollmentCount(seminar?.id);
+    const totalCollected = getTotalCollected(seminar?.id);
+
+    if (enrollmentCount > 0 || totalCollected > 0) {
+      return {
+        allowed: false,
+        reason: t(
+          "seminar_delete_has_history_error",
+          "No puedes eliminar este seminario porque ya tiene inscripciones, pagos o movimientos de billetera asociados."
+        ),
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "",
+    };
+  };
+
+  const requestDeleteSeminar = (seminar) => {
+    const gate = getDeleteGate(seminar);
+    if (!gate.allowed) {
+      toast.error(gate.reason);
+      return;
+    }
+    setSeminarPendingDeletion(seminar);
   };
 
   const renderCompletionDialog = () => (
@@ -494,6 +543,45 @@ export default function MySeminars() {
             }}
           >
             {t("complete_seminar", "Marcar como completado")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  const renderDeleteDialog = () => (
+    <Dialog
+      open={!!seminarPendingDeletion}
+      onOpenChange={(open) => {
+        if (!open) setSeminarPendingDeletion(null);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t("common_delete", "Eliminar")}</DialogTitle>
+          <DialogDescription>
+            {t(
+              "seminar_delete_confirm_body",
+              "Eliminaras este seminario solo si no tiene inscripciones, pagos ni historial asociado."
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        {seminarPendingDeletion?.title ? (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            <span className="font-medium text-slate-900">{seminarPendingDeletion.title}</span>
+          </div>
+        ) : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setSeminarPendingDeletion(null)}>
+            {t("cancel", "Cancelar")}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => deleteMutation.mutate(seminarPendingDeletion?.id)}
+            disabled={deleteMutation.isPending}
+          >
+            {deleteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {t("common_delete", "Eliminar")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -673,9 +761,9 @@ export default function MySeminars() {
     )}&subject=${encodeURIComponent(subject)}`;
   };
 
-  const openCreateNewEdition = (seminarId, requestId = "") => {
+  const openCreateNewEdition = (seminarId, sourceType = "", requestId = "") => {
     if (!seminarId) return;
-    navigate(buildCreateEditionUrl(seminarId, requestId));
+    navigate(buildSeminarInterestActionUrl(seminarId, sourceType, requestId));
   };
 
   const shareMessage = shareLink
@@ -1303,7 +1391,7 @@ export default function MySeminars() {
                     <p className="text-sm text-slate-500 mt-1">
                       {t(
                         "seminar_interest_help",
-                        "Revisa personas interesadas en reapertura o en lista de espera de este seminario."
+                        "Revisa personas interesadas en apertura, reapertura o en lista de espera de este seminario."
                       )}
                     </p>
                   </div>
@@ -1312,10 +1400,18 @@ export default function MySeminars() {
                       variant="outline"
                       size="sm"
                       className="w-full justify-start sm:w-auto sm:justify-center"
-                      onClick={() => openCreateNewEdition(selectedSeminar?.id)}
+                      onClick={() =>
+                        openCreateNewEdition(
+                          selectedSeminar?.id,
+                          selectedSeminar?.status === "interest_only" ? "prelaunch" : "",
+                          ""
+                        )
+                      }
                     >
                       <Plus className="h-4 w-4 mr-2" />
-                      {t("seminar_create_new_edition", "Crear nueva edicion")}
+                      {selectedSeminar?.status === "interest_only"
+                        ? t("seminar_open_enrollments", "Definir fechas y abrir inscripciones")
+                        : t("seminar_create_new_edition", "Crear nueva edicion")}
                     </Button>
                     <Button
                       variant="outline"
@@ -1382,6 +1478,11 @@ export default function MySeminars() {
                             <div className="space-y-1 text-sm text-slate-600 break-words">
                               <p>{row.email}</p>
                               {row.phone ? <p>{row.phone}</p> : null}
+                              {row.invited_by_email ? (
+                                <p className="text-slate-500">
+                                  {t("seminar_interest_invited_by", "Invitado por")}: {row.invited_by_email}
+                                </p>
+                              ) : null}
                               {row.message ? <p className="text-slate-500">{row.message}</p> : null}
                             </div>
                           </div>
@@ -1408,10 +1509,12 @@ export default function MySeminars() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => openCreateNewEdition(selectedSeminar?.id, row.id)}
+                                onClick={() =>
+                                  openCreateNewEdition(selectedSeminar?.id, row.source_type, row.id)
+                                }
                               >
                                 <Plus className="h-4 w-4 mr-2" />
-                                {t("seminar_create_from_interest", "Crear edicion")}
+                                {getSeminarInterestActionLabel(row.source_type, t)}
                               </Button>
                               <Button variant="outline" size="sm" asChild>
                                 <a href={`mailto:${row.email}`}>
@@ -1444,7 +1547,12 @@ export default function MySeminars() {
 
                 <div className="space-y-4 py-2">
                   <p className="text-slate-600 text-sm">
-                    {t("share_professor_note", "Comparte este enlace para invitar estudiantes (sin referidos).")}
+                    {selectedSeminar?.status === "interest_only"
+                      ? t(
+                          "share_professor_interest_only_note",
+                          "Comparte este enlace para captar mas interesados. Los referidos economicos solo aplican cuando abras inscripciones."
+                        )
+                      : t("share_professor_note", "Comparte este enlace para invitar estudiantes (sin referidos).")}
                   </p>
 
                   <div className="flex gap-2">
@@ -1491,6 +1599,7 @@ export default function MySeminars() {
               </DialogContent>
             </Dialog>
             {renderCompletionDialog()}
+            {renderDeleteDialog()}
           </div>
         </div>
       </div>
@@ -1577,6 +1686,9 @@ export default function MySeminars() {
             <TabsList className="w-full bg-white border p-1 rounded-xl">
               <TabsTrigger value="all" className="flex-1 rounded-lg">{t("all", "Todos")}</TabsTrigger>
               <TabsTrigger value="draft" className="flex-1 rounded-lg">{t("draft", "Borradores")}</TabsTrigger>
+              <TabsTrigger value="interest_only" className="flex-1 rounded-lg">
+                {t("interest_only", "Captando interesados")}
+              </TabsTrigger>
               <TabsTrigger value="published" className="flex-1 rounded-lg">{t("published", "Publicados")}</TabsTrigger>
               <TabsTrigger value="completed" className="flex-1 rounded-lg">{t("completed", "Completados")}</TabsTrigger>
             </TabsList>
@@ -1695,7 +1807,7 @@ export default function MySeminars() {
                                   )}
 
                                   <DropdownMenuItem
-                                    onClick={() => deleteMutation.mutate(seminar.id)}
+                                    onClick={() => requestDeleteSeminar(seminar)}
                                     className="text-red-600"
                                   >
                                     <Trash2 className="h-4 w-4 mr-2" />

@@ -238,6 +238,7 @@ max_students: "",
     platform_fee_percent: Number(import.meta.env.VITE_DEFAULT_PLATFORM_FEE_PERCENT || 15),
     professor_bonus_percent: 30,
   });
+  const [interestOnlyMode, setInterestOnlyMode] = useState(false);
   const [materialDraft, setMaterialDraft] = useState({
     type: "file",
     title: "",
@@ -275,6 +276,7 @@ max_students: "",
 
         const fallbackLanguage = localStorage.getItem("preferred_language") || "es";
         setFormData(buildSeminarFormState(data, materialRows, fallbackLanguage, isCloning));
+        setInterestOnlyMode(!isCloning && String(data?.status || "").toLowerCase() === "interest_only");
         setSourceSeminarOwner({
           professor_id: data?.professor_id || null,
           instructor_id: data?.instructor_id || data?.professor_id || null,
@@ -365,6 +367,10 @@ max_students: "",
     });
   };
 
+  const canUseInterestOnlyMode =
+    !isEditing || ["draft", "interest_only"].includes(String(formData.status || "").toLowerCase());
+  const publishStatus = interestOnlyMode ? "interest_only" : "published";
+
   const handleVideoConferencePlatformChange = (value) => {
     setFormData((prev) => ({
       ...prev,
@@ -415,15 +421,15 @@ max_students: "",
       !!formData.description &&
       !!formData.category &&
       !!formData.language &&
-      !!formData.start_date &&
-      !!formData.end_date &&
+      (interestOnlyMode || !!formData.start_date) &&
+      (interestOnlyMode || !!formData.end_date) &&
       !!formData.total_hours &&
       !!formData.target_income &&
       !!formData.target_students &&
       hasValidCoverVideo &&
       hasValidCustomVideoPlatform
     );
-  }, [formData]);
+  }, [formData, interestOnlyMode]);
 
   const coverVideoId = useMemo(
     () => parseYouTubeVideoId(formData.cover_video_url),
@@ -666,10 +672,23 @@ max_students: "",
 
       const resolvedCoverVideoId =
         formData.cover_type === "youtube" ? parseYouTubeVideoId(formData.cover_video_url) : null;
+      const nextStatus = status === "published" ? publishStatus : status;
+      const startDate =
+        nextStatus === "interest_only"
+          ? null
+          : formData.start_date
+            ? format(formData.start_date, "yyyy-MM-dd")
+            : null;
+      const endDate =
+        nextStatus === "interest_only"
+          ? null
+          : formData.end_date
+            ? format(formData.end_date, "yyyy-MM-dd")
+            : null;
 
       const seminarData = {
         ...formData,
-        status,
+        status: nextStatus,
         ...(isEditing
           ? {}
           : isCloning && sourceSeminarOwner?.professor_id && sourceSeminarOwner?.professor_email
@@ -694,8 +713,8 @@ max_students: "",
 max_students: Number.isFinite(parseInt(formData.max_students, 10))
           ? parseInt(formData.max_students, 10)
           : parseInt(formData.target_students, 10) + parseInt(formData.excess_students, 10),
-        start_date: formData.start_date ? format(formData.start_date, "yyyy-MM-dd") : null,
-        end_date: formData.end_date ? format(formData.end_date, "yyyy-MM-dd") : null,
+        start_date: startDate,
+        end_date: endDate,
         cover_type: formData.cover_type === "youtube" ? "youtube" : "image",
         cover_video_url: resolvedCoverVideoId ? buildYouTubeWatchUrl(resolvedCoverVideoId) : null,
         cover_video_provider: resolvedCoverVideoId ? "youtube" : null,
@@ -729,7 +748,7 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
       return data;
     },
     onSuccess: async (seminar) => {
-      if (!isEditing && interestRequestId) {
+      if (interestRequestId && seminar?.status === "published") {
         try {
           const { error: markConvertedError } = await supabase.rpc("update_seminar_interest_request_status", {
             p_request_id: interestRequestId,
@@ -885,17 +904,29 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                       "seminar_create_new_edition_subtitle",
                       "Usa este seminario como base y ajusta las fechas para publicar una nueva edicion."
                     )
+                  : interestOnlyMode
+                    ? t(
+                        "create_seminar_interest_only_subtitle",
+                        "Publica este seminario sin fechas para captar interesados antes de abrir inscripciones."
+                      )
                   : t("create_seminar_subtitle", "Define tu seminario y establece tu ingreso objetivo")}
             </p>
           </div>
         </div>
 
-        {isCloning && sourceSeminarSummary ? (
+        {(isCloning || (isEditing && (sourceSeminarSummary?.id || interestRequestId))) && sourceSeminarSummary ? (
           <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-2 text-sm text-slate-600 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
-              <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-800">
-                {t("seminar_trace_new_edition", "Nueva edicion")}
-              </span>
+              {isCloning ? (
+                <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-800">
+                  {t("seminar_trace_new_edition", "Nueva edicion")}
+                </span>
+              ) : null}
+              {isEditing && String(formData.status || "").toLowerCase() === "interest_only" ? (
+                <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 font-medium text-amber-800">
+                  {t("interest_only", "Captando interesados")}
+                </span>
+              ) : null}
               <span>
                 {t("seminar_trace_base", "Seminario base")}:{" "}
                 <span className="font-medium text-slate-900">{sourceSeminarSummary.title || sourceSeminarSummary.id}</span>
@@ -1149,16 +1180,44 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                   <CardTitle>{t("dates_duration", "Fechas y duracion")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-5">
+                  {canUseInterestOnlyMode ? (
+                    <div className="flex items-start justify-between gap-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                      <div className="space-y-1">
+                        <p className="font-medium text-slate-900">
+                          {t("seminar_interest_only_switch", "Captar interesados primero")}
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          {t(
+                            "seminar_interest_only_switch_help",
+                            "Publica este seminario sin fechas para validar demanda. Luego defines fechas y abres inscripciones en el mismo seminario."
+                          )}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={interestOnlyMode}
+                        onCheckedChange={(checked) => {
+                          setInterestOnlyMode(checked);
+                          if (checked) {
+                            handleChange("start_date", null);
+                            handleChange("end_date", null);
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : null}
+
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>{t("startDate", "Fecha de inicio")} *</Label>
+                      <Label>{t("startDate", "Fecha de inicio")}{interestOnlyMode ? "" : " *"}</Label>
                       <Popover>
                         <PopoverTrigger asChild>
-                          <Button variant="outline" className="w-full h-12 justify-start">
+                          <Button variant="outline" className="w-full h-12 justify-start" disabled={interestOnlyMode}>
                             <CalendarIcon className="mr-2 h-4 w-4" />
                             {formData.start_date
                               ? format(formData.start_date, "PPP", { locale: dateLocale })
-                              : t("select_date", "Seleccionar fecha")}
+                              : interestOnlyMode
+                                ? t("seminar_interest_only_date_tbd", "Fecha por definir")
+                                : t("select_date", "Seleccionar fecha")}
                           </Button>
                         </PopoverTrigger>
                         <PopoverContent className="w-auto p-0 bg-white shadow-xl border z-[99999]">
@@ -1173,14 +1232,16 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                     </div>
 
                     <div className="space-y-2">
-                      <Label>{t("endDate", "Fecha de fin")} *</Label>
+                      <Label>{t("endDate", "Fecha de fin")}{interestOnlyMode ? "" : " *"}</Label>
                       <Popover>
                         <PopoverTrigger asChild>
-                          <Button variant="outline" className="w-full h-12 justify-start">
+                          <Button variant="outline" className="w-full h-12 justify-start" disabled={interestOnlyMode}>
                             <CalendarIcon className="mr-2 h-4 w-4" />
                             {formData.end_date
                               ? format(formData.end_date, "PPP", { locale: dateLocale })
-                              : t("select_date", "Seleccionar fecha")}
+                              : interestOnlyMode
+                                ? t("seminar_interest_only_date_tbd", "Fecha por definir")
+                                : t("select_date", "Seleccionar fecha")}
                           </Button>
                         </PopoverTrigger>
                         <PopoverContent className="w-auto p-0 bg-white shadow-xl border z-[99999]">
@@ -1263,7 +1324,12 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                       {t("payment_window_preview_title", "Ventana de pago configurada por administracion")}
                     </p>
                     <p className="mt-1 text-sky-900">
-                      {formData.start_date
+                      {interestOnlyMode
+                        ? t(
+                            "seminar_interest_only_payment_window_help",
+                            "Mientras solo captes interesados no se habilitan inscripciones, pagos ni bonos. Define fechas para abrir el flujo normal."
+                          )
+                        : formData.start_date
                         ? t(
                             "payment_window_preview_help",
                             "Estas fechas se calculan automaticamente con la fecha de inicio y los dias definidos en BackOffice."
@@ -1780,27 +1846,45 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
 
                   <div className="p-3 bg-emerald-500/20 rounded-lg">
                     <p className="text-xs text-white/90">
-                      {t(
-                        "surplusExplanation",
-                        "Si el total recaudado supera tu objetivo, {percent}% del excedente neto es para ti como bonus."
-                      )
-                        .replace("{percent}", formData.professor_bonus_percent ?? 0)}{" "}
-                      <Button
-                        type="button"
-                        variant="link"
-                        size="sm"
-                        className="inline h-auto p-0 align-baseline text-white underline underline-offset-4 hover:text-white/80"
-                        onClick={() => setEconomicConditionsOpen(true)}
-                      >
-                        {t("economic_conditions_inline_cta", "Condiciones aplican.")}
-                      </Button>
+                      {interestOnlyMode ? (
+                        t(
+                          "seminar_interest_only_bonus_note",
+                          "Mientras este seminario este captando interesados, aun no se habilitan inscripciones, pagos ni referidos."
+                        )
+                      ) : (
+                        <>
+                          {t(
+                            "surplusExplanation",
+                            "Si el total recaudado supera tu objetivo, {percent}% del excedente neto es para ti como bonus."
+                          )
+                            .replace("{percent}", formData.professor_bonus_percent ?? 0)}{" "}
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            className="inline h-auto p-0 align-baseline text-white underline underline-offset-4 hover:text-white/80"
+                            onClick={() => setEconomicConditionsOpen(true)}
+                          >
+                            {t("economic_conditions_inline_cta", "Condiciones aplican.")}
+                          </Button>
+                        </>
+                      )}
                     </p>
                   </div>
 
                   <p className="text-xs text-white/50">
-                    {t("students_pay_less", "Los estudiantes pagan menos cuanto mas confirmen.")}{" "}
-                    {t("goal_slots_short", "Cupos objetivo")}: {formData.target_students || "-"} {" | "}
-                    {t("total_capacity", "Capacidad total")}: {formData.max_students || "-"}
+                    {interestOnlyMode ? (
+                      t(
+                        "seminar_interest_only_capacity_note",
+                        "Muestra tu objetivo y capacidad para captar demanda antes de fijar calendario."
+                      )
+                    ) : (
+                      <>
+                        {t("students_pay_less", "Los estudiantes pagan menos cuanto mas confirmen.")}{" "}
+                        {t("goal_slots_short", "Cupos objetivo")}: {formData.target_students || "-"} {" | "}
+                        {t("total_capacity", "Capacidad total")}: {formData.max_students || "-"}
+                      </>
+                    )}
                   </p>
                 </CardContent>
               </Card>
@@ -1832,12 +1916,21 @@ max_students: Number.isFinite(parseInt(formData.max_students, 10))
                 ) : (
                   <Check className="h-4 w-4 mr-2" />
                 )}
-                {t("publish", "Publicar")}
+                {interestOnlyMode
+                  ? t("publish_interest_only", "Publicar para captar interesados")
+                  : isEditing && String(formData.status || "").toLowerCase() === "interest_only"
+                    ? t("seminar_open_enrollments", "Definir fechas y abrir inscripciones")
+                    : t("publish", "Publicar")}
               </Button>
 
               {!isValid ? (
                 <p className="text-xs text-slate-500">
-                  {t("publish_requirements", "Completa todos los campos obligatorios (*) para publicar (incluye fecha fin y objetivo).")}
+                  {interestOnlyMode
+                    ? t(
+                        "publish_requirements_interest_only",
+                        "Completa los campos obligatorios (*) para publicar este seminario y empezar a captar interesados."
+                      )
+                    : t("publish_requirements", "Completa todos los campos obligatorios (*) para publicar (incluye fecha fin y objetivo).")}
                 </p>
               ) : null}
             </div>
