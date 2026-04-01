@@ -1,7 +1,9 @@
+import { useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LanguageProvider } from "./Components/shared/LanguageContext";
 import PwaUpdatePrompt from "./Components/shared/PwaUpdatePrompt.jsx";
+import SeoRouteMeta from "./Components/shared/SeoRouteMeta.jsx";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./Layout.jsx";
@@ -25,6 +27,7 @@ import TeacherProfile from "./Pages/TeacherProfile.jsx";
 
 // ✅ BackOffice
 import AdminLayout from "./Pages/Admin/AdminLayout.jsx";
+import { trackPageView } from "./lib/analytics.js";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -75,6 +78,20 @@ function RequireSession({ children }) {
   return children;
 }
 
+function AnalyticsRouterTracker() {
+  const location = useLocation();
+
+  useEffect(() => {
+    trackPageView({
+      path: `${location.pathname}${location.search || ""}`,
+      title: document.title,
+      location: window.location.href,
+    });
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+
 function App() {
   const basePath = (import.meta.env.VITE_BASE_PATH || "/").replace(/\/$/, "") || "/";
   return (
@@ -84,6 +101,8 @@ function App() {
           <Router basename={basePath}>
             <Toaster position="top-center" richColors />
             <PwaUpdatePrompt />
+            <AnalyticsRouterTracker />
+            <SeoRouteMeta />
 
             <Routes>
               <Route path="/login" element={<Login />} />

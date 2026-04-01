@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "build:staging": "vite build --mode staging --outDir dist-staging",
-    "build:prod": "vite build --mode production --outDir dist-prod",
+    "build": "node scripts/generate-seo-files.mjs && vite build",
+    "build:staging": "node scripts/generate-seo-files.mjs staging && vite build --mode staging --outDir dist-staging",
+    "build:prod": "node scripts/generate-seo-files.mjs production && vite build --mode production --outDir dist-prod",
     "build:all": "npm run build:staging && npm run build:prod",
     "lint": "eslint .",
     "preview": "vite preview"

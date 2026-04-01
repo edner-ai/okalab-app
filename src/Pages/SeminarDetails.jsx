@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
+import { trackEvent } from "../lib/analytics.js";
 import { useLanguage } from "../Components/shared/LanguageContext";
 import LocalCurrencyReference from "../Components/payments/LocalCurrencyReference";
 import { getIntlLocale } from "../utils/dateLocale";
@@ -467,6 +468,17 @@ export default function SeminarDetails() {
   }, [seminar, seminarId, t]);
 
   useEffect(() => {
+    if (!seminarId || !seminar?.title) return;
+    trackEvent("seminar_view", {
+      seminar_id: seminarId,
+      seminar_title: seminar.title,
+      seminar_status: seminar.status || "",
+      seminar_modality: seminar.modality || "",
+      seminar_category: seminar.category || "",
+    });
+  }, [seminarId, seminar?.title, seminar?.status, seminar?.modality, seminar?.category]);
+
+  useEffect(() => {
     if (!userEnrollment) return;
     clearReferralStateForSeminar(seminarId);
   }, [userEnrollment, seminarId]);
@@ -854,8 +866,13 @@ if (error) {
             : t(
                 "seminar_interest_success",
                 "Tu solicitud fue registrada. El profesor o el equipo de Okalab podran contactarte si este seminario abre inscripciones o si se publica una nueva edicion."
-              )
+            )
       );
+      trackEvent("interest_request_submit", {
+        seminar_id: seminarId,
+        source_type: interestSourceType,
+        already_registered: alreadyExisted ? "true" : "false",
+      });
       if (interestSourceType === "prelaunch" && requestId) {
         setShowShareDialog(true);
       }

@@ -17,6 +17,8 @@ dist-ssr
 .env.production
 .env.staging
 dev-dist
+public/robots.txt
+public/sitemap.xml
 
 # Editor directories and files
 .vscode/*
