@@ -62,6 +62,19 @@ export function getContactProfileState(profile, user) {
   };
 }
 
+export function getEnrollmentProfileState(profile) {
+  const countryCode = normalizeCountryCode(profile?.country_code);
+  const missing = [];
+
+  if (!countryCode) missing.push("country_code");
+
+  return {
+    countryCode,
+    missing,
+    isComplete: missing.length === 0,
+  };
+}
+
 export function buildContactOnboardingUrl(nextUrl = "/") {
   return `/profile?onboarding=contact&next=${encodeURIComponent(nextUrl)}`;
 }

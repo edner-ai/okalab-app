@@ -7,10 +7,10 @@ import { useLanguage } from "../Components/shared/LanguageContext";
 import LocalCurrencyReference from "../Components/payments/LocalCurrencyReference";
 import { getIntlLocale } from "../utils/dateLocale";
 import { buildPublicAppUrl } from "../utils/appUrl";
-import { normalizeCountryCode } from "../utils/countries";
+import { getCountryOptions, normalizeCountryCode } from "../utils/countries";
 import { resolvePaymentWindow } from "../utils/paymentWindow";
 import { parseDateValue } from "../utils/dateValue";
-import { buildContactOnboardingUrl } from "../utils/contactProfile";
+import { getEnrollmentProfileState } from "../utils/contactProfile";
 import { getVideoConferencePlatformLabel } from "../utils/videoConference";
 import {
   normalizeSeminarCover,
@@ -27,14 +27,17 @@ import { Button } from "../Components/ui/button";
 import { Card, CardContent } from "../Components/ui/card";
 import { Badge } from "../Components/ui/badge";
 import { Input } from "../Components/ui/input";
+import { Label } from "../Components/ui/label";
 import { Textarea } from "../Components/ui/textarea";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from "../Components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../Components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../Components/ui/tabs";
 import StarRating from "../Components/reviews/StarRating";
 import PaymentWindowCountdown from "../Components/seminars/PaymentWindowCountdown";
@@ -125,8 +128,12 @@ export default function SeminarDetails() {
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showPayDialog, setShowPayDialog] = useState(false);
   const [showInterestDialog, setShowInterestDialog] = useState(false);
+  const [showCountryDialog, setShowCountryDialog] = useState(false);
   const [copied, setCopied] = useState(false);
   const [referralPrompted, setReferralPrompted] = useState(false);
+  const [countrySelection, setCountrySelection] = useState("");
+  const [pendingEnrollAfterCountrySave, setPendingEnrollAfterCountrySave] = useState(false);
+  const [localEnrollmentCountryCode, setLocalEnrollmentCountryCode] = useState("");
   const [interestForm, setInterestForm] = useState({
     full_name: "",
     email: "",
@@ -135,11 +142,21 @@ export default function SeminarDetails() {
   });
   const [ownInterestRequestId, setOwnInterestRequestId] = useState("");
 
-  const { user, profile, contactProfileComplete } = useAuth();
-  const residenceCountryCode = normalizeCountryCode(profile?.country_code);
+  const { user, profile, refresh } = useAuth();
+  const residenceCountryCode = normalizeCountryCode(localEnrollmentCountryCode || profile?.country_code);
+  const enrollmentProfileState = useMemo(
+    () =>
+      getEnrollmentProfileState({
+        ...profile,
+        country_code: residenceCountryCode || profile?.country_code,
+      }),
+    [profile, residenceCountryCode]
+  );
 
   const { t, language } = useLanguage();
   const defaultMetaRef = useRef(null);
+  const countryOptions = useMemo(() => getCountryOptions(getIntlLocale(language)), [language]);
+  const currentPathWithSearch = `${location.pathname}${location.search || ""}`;
 
   const { data: platformSettings } = useQuery({
     queryKey: ["platform_settings_public_seminar_details"],
@@ -178,6 +195,11 @@ export default function SeminarDetails() {
       requestId: interestRefParam,
     });
   }, [seminarId, interestRefParam]);
+
+  useEffect(() => {
+    if (!showCountryDialog) return;
+    setCountrySelection(residenceCountryCode || "");
+  }, [showCountryDialog, residenceCountryCode]);
 
   // 1) Seminar
   const { data: seminar, isLoading } = useQuery({
@@ -494,6 +516,26 @@ export default function SeminarDetails() {
     setInterestForm(interestDefaultForm);
   }, [showInterestDialog, interestDefaultForm]);
 
+  const openCountryDialogForEnrollment = () => {
+    setPendingEnrollAfterCountrySave(true);
+    setShowEnrollDialog(false);
+    setShowCountryDialog(true);
+  };
+
+  const handleStartEnrollment = () => {
+    if (!user) {
+      navigate(`/login?next=${encodeURIComponent(currentPathWithSearch)}`);
+      return;
+    }
+
+    if (!enrollmentProfileState.isComplete) {
+      openCountryDialogForEnrollment();
+      return;
+    }
+
+    setShowEnrollDialog(true);
+  };
+
   useEffect(() => {
     if (!referralCode || referralPrompted) return;
     if (enrollmentsLoading) return;
@@ -508,6 +550,11 @@ export default function SeminarDetails() {
       isEnded ||
       isEnrollClosedForPayments
     ) {
+      return;
+    }
+    if (!enrollmentProfileState.isComplete) {
+      openCountryDialogForEnrollment();
+      setReferralPrompted(true);
       return;
     }
     setShowEnrollDialog(true);
@@ -525,6 +572,7 @@ export default function SeminarDetails() {
     isEnded,
     isEnrollClosedForPayments,
     enrollmentsLoading,
+    enrollmentProfileState.isComplete,
   ]);
 
   // Pricing (modelo):
@@ -606,10 +654,10 @@ const isEnrollmentPaid = payStatus === "paid";
 const materialsAccessMode = seminar?.materials_access_mode || "start_date";
 const materialsReleasedForPaidStudents =
   materialsAccessMode === "after_payment" || hasStarted;
-const canAccessMaterials =
+  const canAccessMaterials =
   isOwnerProfessor || isAdmin || (!!userEnrollment && isEnrollmentPaid && materialsReleasedForPaidStudents);
-const canRequestMaterials = !!seminarId;
-const showPayButton = !!userEnrollment && isPayableStatus && canPayNow;
+  const canRequestMaterials = !!seminarId;
+  const showPayButton = !!userEnrollment && isPayableStatus && canPayNow;
 const payableAmount = Number(userEnrollment?.final_price ?? estimatedPriceNow ?? 0);
 const showUpcomingPayButton =
   !!userEnrollment &&
@@ -619,10 +667,64 @@ const showUpcomingPayButton =
   !!paymentOpenDate;
 const showClosedPayState = !!userEnrollment && isPayableStatus && isPaymentWindowClosed;
 
-const showDecisionBlock =
+  const showDecisionBlock =
   !!userEnrollment && isPayableStatus && canPayNow && !targetReached;
 
-const { data: seminarMaterials = [], isLoading: materialsLoading } = useQuery({
+  const saveEnrollmentCountryMutation = useMutation({
+    mutationFn: async () => {
+      if (!user?.id) {
+        throw new Error(t("auth_required", "Debes iniciar sesion para continuar."));
+      }
+
+      const normalizedCountryCode = normalizeCountryCode(countrySelection);
+      if (!normalizedCountryCode) {
+        throw new Error(
+          t("enrollment_country_required_error", "Selecciona tu pais de residencia para continuar.")
+        );
+      }
+
+      const preferredLanguage = profile?.preferred_language || language || "es";
+      const { error: ensureProfileError } = await supabase.rpc("ensure_my_profile", {
+        p_preferred_language: preferredLanguage,
+      });
+
+      if (ensureProfileError) throw ensureProfileError;
+
+      const updatePayload = {
+        country_code: normalizedCountryCode,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from("profiles")
+        .update(updatePayload)
+        .eq("id", user.id);
+
+      if (error) throw error;
+
+      return normalizedCountryCode;
+    },
+    onSuccess: async (normalizedCountryCode) => {
+      setLocalEnrollmentCountryCode(normalizedCountryCode);
+      setShowCountryDialog(false);
+      try {
+        await refresh();
+      } catch {
+        // No bloquea la continuación si la sincronización tarda.
+      }
+      if (pendingEnrollAfterCountrySave) {
+        setPendingEnrollAfterCountrySave(false);
+        setShowEnrollDialog(true);
+      }
+    },
+    onError: (err) => {
+      toast.error(
+        err?.message || t("common_save_error", "No se pudo guardar")
+      );
+    },
+  });
+
+  const { data: seminarMaterials = [], isLoading: materialsLoading } = useQuery({
   queryKey: ["seminar-materials", seminarId, user?.id || "anon", materialsAccessMode, hasStarted],
   enabled: canRequestMaterials,
   queryFn: async () => {
@@ -678,15 +780,12 @@ const { data: seminarMaterials = [], isLoading: materialsLoading } = useQuery({
 	          )
 	        );
 	      }
-	      if (!contactProfileComplete) {
-	        navigate(buildContactOnboardingUrl(`${location.pathname}${location.search || ""}`));
-        throw new Error(
-          t(
-            "contact_profile_required_enroll",
-            "Completa tu perfil de contacto antes de inscribirte."
-          )
-        );
-      }
+	      if (!enrollmentProfileState.isComplete) {
+	        openCountryDialogForEnrollment();
+	        const error = new Error("ENROLLMENT_COUNTRY_REQUIRED");
+	        error.silent = true;
+	        throw error;
+	      }
       if (isFull) {
         throw new Error(
           t(
@@ -760,9 +859,13 @@ if (error) {
       }
       // No pagamos aquí: el pago se maneja en la ventana configurada (ProcessPayment / quote_price)
     },
-    onError: (err) => {
-      const rawMessage = String(err?.message || "");
-      const isDuplicateEnrollment =
+	    onError: (err) => {
+	      if (err?.silent) {
+	        return;
+	      }
+
+	      const rawMessage = String(err?.message || "");
+	      const isDuplicateEnrollment =
         err?.code === "23505" ||
         rawMessage.includes("enrollments_unique_student_seminar") ||
         rawMessage.toLowerCase().includes("duplicate key value violates unique constraint");
@@ -1743,13 +1846,13 @@ if (error) {
                       {t("enrollments_closed", "Inscripciones cerradas")}
                     </Button>
                   </div>
-                ) : (
-                  <Button
-                    onClick={() => setShowEnrollDialog(true)}
-                    className="w-full h-12 bg-slate-900 hover:bg-slate-800 text-base"
-                  >
-                    {t("enroll", "Inscribirse")}
-                  </Button>
+	                ) : (
+	                  <Button
+	                    onClick={handleStartEnrollment}
+	                    className="w-full h-12 bg-slate-900 hover:bg-slate-800 text-base"
+	                  >
+	                    {t("enroll", "Inscribirse")}
+	                  </Button>
                 )}
 
                 {enrollmentCount > 0 && targetIncome > 0 && !targetReached && !isInterestOnly && (
@@ -1764,11 +1867,88 @@ if (error) {
             </Card>
           </div>
         </div>
-      </div>
+	      </div>
 
-      {/* Enroll Dialog (igual Base44) */}
-      <Dialog open={showEnrollDialog} onOpenChange={setShowEnrollDialog}>
-        <DialogContent className="sm:max-w-md">
+	      <Dialog
+	        open={showCountryDialog}
+	        onOpenChange={(open) => {
+	          setShowCountryDialog(open);
+	          if (!open) {
+	            setPendingEnrollAfterCountrySave(false);
+	          }
+	        }}
+	      >
+	        <DialogContent className="sm:max-w-md">
+	          <DialogHeader>
+	            <DialogTitle>
+	              {t(
+	                "enrollment_country_required_title",
+	                "Antes de inscribirte, dinos tu pais de residencia"
+	              )}
+	            </DialogTitle>
+	            <DialogDescription className="text-slate-600">
+	              {t(
+	                "enrollment_country_required_help",
+	                "Solo necesitamos este dato para mostrarte tu moneda local y los metodos de pago correctos."
+	              )}
+	            </DialogDescription>
+	          </DialogHeader>
+
+	          <div className="space-y-4 py-4">
+	            <div className="space-y-2">
+	              <Label>{t("profile_country", "Pais de residencia")} *</Label>
+	              <Select
+	                value={countrySelection || undefined}
+	                onValueChange={setCountrySelection}
+	              >
+	                <SelectTrigger className="h-12">
+	                  <SelectValue
+	                    placeholder={t("profile_country_placeholder", "Selecciona tu pais")}
+	                  />
+	                </SelectTrigger>
+	                <SelectContent className="max-h-80 bg-white border border-slate-200 shadow-xl rounded-xl z-50">
+	                  {countryOptions.map((option) => (
+	                    <SelectItem key={option.value} value={option.value}>
+	                      {option.label}
+	                    </SelectItem>
+	                  ))}
+	                </SelectContent>
+	              </Select>
+	              <p className="text-xs text-slate-500">
+	                {t(
+	                  "profile_country_help",
+	                  "Usamos este pais para mostrar tu moneda local y los metodos de pago correctos."
+	                )}
+	              </p>
+	            </div>
+	          </div>
+
+	          <DialogFooter>
+	            <Button
+	              variant="outline"
+	              onClick={() => {
+	                setPendingEnrollAfterCountrySave(false);
+	                setShowCountryDialog(false);
+	              }}
+	            >
+	              {t("common_cancel", "Cancelar")}
+	            </Button>
+	            <Button
+	              onClick={() => saveEnrollmentCountryMutation.mutate()}
+	              disabled={saveEnrollmentCountryMutation.isPending}
+	              className="bg-slate-900 hover:bg-slate-800"
+	            >
+	              {saveEnrollmentCountryMutation.isPending
+	                ? t("common_processing", "Procesando...")
+	                : t("save_and_continue", "Guardar y continuar")}
+	            </Button>
+	          </DialogFooter>
+	        </DialogContent>
+	      </Dialog>
+
+	      {/* Enroll Dialog (igual Base44) */}
+	      <Dialog open={showEnrollDialog} onOpenChange={setShowEnrollDialog}>
+	        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t("confirm_enroll", "Confirmar inscripción")}</DialogTitle>
           </DialogHeader>
